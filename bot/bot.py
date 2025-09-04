@@ -1,7 +1,8 @@
 import logging
-import requests
-import uuid
 import base64
+import aiohttp
+import sqlite3
+import uuid
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 from dotenv import load_dotenv
@@ -18,26 +19,54 @@ logger = logging.getLogger(__name__)
 SERVER_URL = 'http://127.0.0.1:5000/applications'
 TOKEN = os.getenv('TOKEN')
 
-# Обработчик команды /start
+def get_db():
+    conn = sqlite3.connect('applications.db')
+    conn.row_factory = sqlite3.Row
+    return conn
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data.clear()
+    keyboard = [[KeyboardButton("Start")]]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text(
-        "Приветствую, заполните заявку по форме:\n"
-        "Имя\n"
-        "Отделение\n"
-        "Текст проблемы\n"
-        "Фото (если есть) отправьте отдельными сообщениями после текста.\n"
-        "Когда все фото отправлены, напишите /done для отправки заявки."
+        "Приветствую! Для подачи заявки нажмите Start.",
+        reply_markup=reply_markup
     )
 
-# Обработчик текстовых сообщений (заявок)
+async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    import re
+    match = re.search(r'Заявка с([a-f0-9]+)', text.lower())
+    if match:
+        app_id = match.group(1)
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM applications WHERE application_id = ?", (app_id,))
+        row = cur.fetchone()
+        if row:
+            cur.execute("DELETE FROM applications WHERE application_id = ?", (app_id,))
+            conn.commit()
+            conn.close()
+        else:
+            conn.close()
+            await update.message.reply_text(f"Заявка с ID {app_id} не найдена")
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['last_text'] = update.message.text
-    context.user_data['photos'] = []
-    await update.message.reply_text(
-        "Если хотите добавить фото, отправьте их по одному. "
-        "Когда закончите — напишите /done для отправки заявки."
-    )
+    text = update.message.text.strip().lower()
+    if text == "start":
+        context.user_data.clear()
+        keyboard = [[KeyboardButton("Done")]]
+        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+        await update.message.reply_text(
+            "Заполните заявку по форме:\nИмя\nОтделение\nТекст проблемы\n(Фото отправьте отдельными сообщениями, если есть). Когда всё готово, нажмите Done.",
+            reply_markup=reply_markup
+        )
+    elif text == "done":
+        await done(update, context)
+    else:
+        context.user_data['last_text'] = update.message.text
+        await update.message.reply_text(
+            "Если хотите добавить фото, отправьте их сейчас. Когда всё готово, нажмите Done."
+        )
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if 'last_text' not in context.user_data:
@@ -55,6 +84,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Фото добавлено. Можете отправить ещё или напишите /done для отправки заявки.")
 
 async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    application_id = str(uuid.uuid4())[:8]
     text = context.user_data.get('last_text', '')
     photos = context.user_data.get('photos', [])
     lines = text.strip().split('\n')
@@ -67,12 +97,20 @@ async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     'department': department,
     'details': details,
     'photos': photos,
-    'chat_id': update.effective_user.id
+    'chat_id': update.effective_user.id,
+    'application_id': application_id
     }
     try:
-        response = requests.post(SERVER_URL, json=data)
-        response.raise_for_status()
-        await update.message.reply_text("Ваша заявка отправлена! Спасибо.")
+        async with aiohttp.ClientSession() as session:
+            async with session.post(SERVER_URL, json=data) as response:
+                response.raise_for_status()
+        await update.message.reply_text(f"Ваш уникальный идентификатор заявки: {application_id}")
+        keyboard = [[KeyboardButton("Start")]]
+        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+        await update.message.reply_text(
+            "Чтобы подать новую, нажмите Start.",
+            reply_markup=reply_markup
+        )
         context.user_data.clear()
     except Exception as e:
         await update.message.reply_text("Ошибка при отправке заявки. Попробуйте позже.")

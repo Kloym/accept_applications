@@ -24,6 +24,7 @@ def add_application():
     department = data.get('department')
     details = data.get('details')
     chat_id = data.get('chat_id')
+    application_id = data.get('application_id')
     photos_b64 = data.get('photos', [])
 
     photo_paths = []
@@ -37,8 +38,8 @@ def add_application():
     conn = get_db()
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO applications (name, department, details, chat_id, photos) VALUES (?, ?, ?, ?, ?)",
-        (name, department, details, chat_id, json.dumps(photo_paths))
+        "INSERT INTO applications (name, department, details, chat_id, photos, application_id) VALUES (?, ?, ?, ?, ?, ?)",
+        (name, department, details, chat_id, json.dumps(photo_paths), application_id)
     )
     conn.commit()
     conn.close()
@@ -85,6 +86,7 @@ if __name__ == '__main__':
     conn = get_db()
     conn.execute('''CREATE TABLE IF NOT EXISTS applications (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        application_id TEXT
         name TEXT,
         department TEXT,
         details TEXT,

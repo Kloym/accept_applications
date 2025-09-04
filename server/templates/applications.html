@@ -50,6 +50,7 @@
                 {% endif %}
             </td>
             <td>{{ app.chat_id }}</td>
+            <td style="font-size: small; color: gray;">ID: {{ app.application_id }}</td>
             <td>
                 <form method="post" action="/delete/{{ app.id }}" style="display:inline;">
                     <button type="submit" style="background:#b0b0b0;color:#fff;border:none;padding:8px 16px;border-radius:5px;cursor:pointer;">
