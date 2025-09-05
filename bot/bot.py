@@ -3,6 +3,8 @@ import base64
 import aiohttp
 import sqlite3
 import uuid
+import logging
+import re
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 from dotenv import load_dotenv
@@ -32,23 +34,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=reply_markup
     )
 
+def delete_application_by_id(app_id):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM applications WHERE application_id = ?", (app_id,))
+    conn.commit()
+    deleted = cursor.rowcount
+    conn.close()
+    return deleted > 0
+
 async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
-    import re
-    match = re.search(r'Заявка с([a-f0-9]+)', text.lower())
+    match = re.match(r'Заявка\s+([a-f0-9]{8})\s+выполнена', text, re.IGNORECASE)
     if match:
         app_id = match.group(1)
-        conn = get_db()
-        cur = conn.cursor()
-        cur.execute("SELECT * FROM applications WHERE application_id = ?", (app_id,))
-        row = cur.fetchone()
-        if row:
-            cur.execute("DELETE FROM applications WHERE application_id = ?", (app_id,))
-            conn.commit()
-            conn.close()
-        else:
-            conn.close()
-            await update.message.reply_text(f"Заявка с ID {app_id} не найдена")
+        delete_application_by_id(app_id)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip().lower()
@@ -119,6 +119,8 @@ def main():
     application = Application.builder().token(TOKEN).build()
     application.add_handler(CommandHandler('done', done))
     application.add_handler(CommandHandler('start', start))
+    application.add_handler(MessageHandler(
+    filters.Regex(r'Заявка\s+[a-f0-9]{8}\s+выполнена'), handle_group_message))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     application.run_polling()

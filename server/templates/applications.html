@@ -5,11 +5,18 @@
     <title>Заявки</title>
     <style>
     body { font-family: Arial, sans-serif; background: #f5f5f5; }
+    .table-container {
+      width: 100%;
+      max-height: 600px;
+      overflow: auto;
+      margin: 40px auto;
+      border: 1px solid #ccc;
+    }
     table { 
         border-collapse: collapse; 
         margin: 40px auto; 
         background: #fff; 
-        width: 1500px; /* или width: 80%; */
+        width: 1500px;
     }
     th, td { 
         border: 1px solid #ccc; 
@@ -24,42 +31,44 @@
 </head>
 <body>
     <h2 style="text-align:center;">Список заявок</h2>
-    <table>
-        <tr>
-            <th>Имя</th>
-            <th>Отделение</th>
-            <th>Текст заявки</th>
-            <th>Фото</th>
-            <th>chat_id</th>
-            <th>Статус</th>
-        </tr>
-        {% for app in applications %}
-        <tr>
-            <td>{{ app.name }}</td>
-            <td>{{ app.department }}</td>
-            <td>{{ app.details }}</td>
-            <td>
-                {% if app.photo_urls %}
-                    {% for url in app.photo_urls %}
-                        <a href="{{ url }}" target="_blank">
-                            <img src="{{ url }}" alt="Фото" style="max-width:100px;max-height:100px;">
-                        </a>
-                    {% endfor %}
-                {% else %}
-                    Нет фото
-                {% endif %}
-            </td>
-            <td>{{ app.chat_id }}</td>
-            <td style="font-size: small; color: gray;">ID: {{ app.application_id }}</td>
-            <td>
-                <form method="post" action="/delete/{{ app.id }}" style="display:inline;">
-                    <button type="submit" style="background:#b0b0b0;color:#fff;border:none;padding:8px 16px;border-radius:5px;cursor:pointer;">
-                        Выполнено
-                    </button>
-                </form>
-            </td>
-        </tr>
-        {% endfor %}
-</table>
+    <div class="table-container">
+        <table>
+            <tr>
+                <th>Имя</th>
+                <th>Отделение</th>
+                <th>Текст заявки</th>
+                <th>Фото</th>
+                <th>chat_id</th>
+                <th>Статус</th>
+            </tr>
+            {% for app in applications %}
+            <tr>
+                <td>{{ app.name }}</td>
+                <td>{{ app.department }}</td>
+                <td>{{ app.details }}</td>
+                <td>
+                    {% if app.photo_urls %}
+                        {% for url in app.photo_urls %}
+                            <a href="{{ url }}" target="_blank">
+                                <img src="{{ url }}" alt="Фото" style="max-width:100px;max-height:100px;">
+                            </a>
+                        {% endfor %}
+                    {% else %}
+                        Нет фото
+                    {% endif %}
+                </td>
+                <td>{{ app.chat_id }}</td>
+                <td style="font-size: small; color: gray;">ID: {{ app.application_id }}</td>
+                <td>
+                    <form method="post" action="/delete/{{ app.id }}" style="display:inline;">
+                        <button type="submit" style="background:#b0b0b0;color:#fff;border:none;padding:8px 16px;border-radius:5px;cursor:pointer;">
+                            Выполнено
+                        </button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </table>
+    </div>
 </body>
 </html>
