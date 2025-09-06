@@ -29,7 +29,7 @@ def add_application():
 
     photo_paths = []
     for idx, photo_b64 in enumerate(photos_b64):
-        filename = f"{chat_id}_{len(details)}_{idx}.jpg"
+        filename = f"{application_id}_{idx}.jpg"
         photo_path = os.path.join(UPLOAD_FOLDER, filename)
         with open(photo_path, "wb") as f:
             f.write(base64.b64decode(photo_b64))

@@ -48,19 +48,20 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
     match = re.match(r'Заявка\s+([a-f0-9]{8})\s+выполнена', text, re.IGNORECASE)
     if match:
         app_id = match.group(1)
-        delete_application_by_id(app_id)
+        if not delete_application_by_id(app_id):
+            await update.message.reply_text(f'Заявка {app_id} не найдена в базе данных')
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip().lower()
-    if text == "start":
+    if text.lower() == "start":
         context.user_data.clear()
-        keyboard = [[KeyboardButton("Done")]]
+        keyboard = [[KeyboardButton("✅ Done")]]
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
         await update.message.reply_text(
-            "Заполните заявку по форме:\nИмя\nОтделение\nТекст проблемы\n(Фото отправьте отдельными сообщениями, если есть). Когда всё готово, нажмите Done.",
+            "Заполните заявку по форме:\nФамилия\nОтделение\nТекст проблемы\n(Фото отправьте отдельными сообщениями, если есть). Когда всё готово, нажмите Done.",
             reply_markup=reply_markup
         )
-    elif text == "done":
+    elif text.lower() == "✅ done":
         await done(update, context)
     else:
         context.user_data['last_text'] = update.message.text
