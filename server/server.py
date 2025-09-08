@@ -23,9 +23,10 @@ def add_application():
     name = data.get('name')
     department = data.get('department')
     details = data.get('details')
-    chat_id = data.get('chat_id')
     application_id = data.get('application_id')
     photos_b64 = data.get('photos', [])
+    username = data.get('username')
+    chat_id = data.get('chat_id')
 
     photo_paths = []
     for idx, photo_b64 in enumerate(photos_b64):
@@ -38,8 +39,8 @@ def add_application():
     conn = get_db()
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO applications (name, department, details, chat_id, photos, application_id) VALUES (?, ?, ?, ?, ?, ?)",
-        (name, department, details, chat_id, json.dumps(photo_paths), application_id)
+        "INSERT INTO applications (name, department, details, username, photos, application_id, chat_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (name, department, details, username, json.dumps(photo_paths), application_id, chat_id)
     )
     conn.commit()
     conn.close()
@@ -78,6 +79,28 @@ def delete_application(application_id):
     conn.close()
     return redirect(url_for('get_applications'))
 
+@app.route('/update_photo', methods=['POST'])
+def update_photo():
+    data = request.get_json()
+    application_id = data.get('application_id')
+    username = data.get('username')
+    photo_b64 = data.get('photo')
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM applications WHERE application_id=? AND lower(username)=lower(?)", (application_id, username))
+    row = cur.fetchone()
+    if not row:
+        conn.close()
+        return jsonify({'error': 'Заявка не найдена или не принадлежит вам'}), 404
+    filename = f"{application_id}_updated.jpg"
+    photo_path = os.path.join(UPLOAD_FOLDER, filename)
+    with open(photo_path, "wb") as f:
+        f.write(base64.b64decode(photo_b64))
+    cur.execute("UPDATE applications SET photos=? WHERE application_id=?", (json.dumps([filename]), application_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'message': 'Фото обновлено'}), 200
+
 @app.route('/uploads/<filename>')
 def uploaded_file(filename):
     return send_from_directory(UPLOAD_FOLDER, filename)
@@ -86,11 +109,12 @@ if __name__ == '__main__':
     conn = get_db()
     conn.execute('''CREATE TABLE IF NOT EXISTS applications (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        application_id TEXT
+        application_id TEXT,
+        chat_id TEXT,
         name TEXT,
         department TEXT,
         details TEXT,
-        chat_id TEXT,
+        username TEXT,
         photos TEXT
     )''')
     conn.close()
