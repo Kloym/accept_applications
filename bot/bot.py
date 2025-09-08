@@ -64,12 +64,12 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
         try:
             await context.bot.send_message(
                 chat_id=chat_id,
-                text=f"{name}, ваша заявка выполнена!"
+                text=f"{name.title()}, ваша заявка выполнена!"
             )
         except Exception as e:
             pass
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip().lower()
+    text = update.message.text.strip().title()
     state = context.user_data.get("state")
 
     if text.lower() == 'обновить фото':
