@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>Заявки</title>
+    <title>{% if archive %}Архив заявок{% else %}Список заявок{% endif %}</title>
     <meta http-equiv="refresh" content="10">
     <style>
     body { font-family: Arial, sans-serif; background: #f5f5f5; }
@@ -28,14 +28,34 @@
     th { background: #4CAF50; color: #fff; }
     img { max-width: 140px; max-height: 140px; }
     h2 { text-align: center; }
+    .nav-btns { text-align: center; margin: 20px 0; }
+    .nav-btns a {
+        display: inline-block;
+        margin: 0 10px;
+        padding: 10px 24px;
+        background: #4CAF50;
+        color: #fff;
+        text-decoration: none;
+        border-radius: 5px;
+        font-weight: bold;
+    }
+    .nav-btns a.active { background: #357a38; }
     </style>
 </head>
 <body>
-    <h2 style="text-align:center;">Список заявок</h2>
+    <div class="nav-btns">
+        <a href="/applications" class="{% if not archive %}active{% endif %}">Активные заявки</a>
+        <a href="/archive" class="{% if archive %}active{% endif %}">Архив заявок</a>
+    </div>
+    <h2 style="text-align:center;">
+        {% if archive %}Архив заявок{% else %}Список заявок{% endif %}
+    </h2>
     <div class="table-container">
         <table>
             <tr>
                 <th>Фамилия</th>
+                <th>Пароль ЕМИАС</th>
+                <th>IP адрес</th>
                 <th>Отделение</th>
                 <th>Текст заявки</th>
                 <th>Фото</th>
@@ -46,8 +66,10 @@
             {% for app in applications %}
             <tr>
                 <td>{{ app.name }}</td>
+                <td>{{ app.emiac }}</td>
+                <td>{{ app.ip }}</td>
                 <td>{{ app.department }}</td>
-                <td>{{ app.details }}</td>
+                <td>{{ app.details | replace('\n', '<br>') | safe }}</td>
                 <td>
                     {% if app.photo_urls %}
                         {% for url in app.photo_urls %}
@@ -66,13 +88,19 @@
                         Нет username
                     {% endif %}
                 </td>
-                <td style="font-size: small; color: gray;">ID: {{ app.application_id }}</td>
+                <td style="font-size: 2em; font-weight: bold; color: #222; letter-spacing: 2px; text-align: center;">
+                    {{ app.application_id }}
+                </td>
                 <td>
-                    <form method="post" action="/delete/{{ app.id }}" style="display:inline;">
-                        <button type="submit" style="background:#b0b0b0;color:#fff;border:none;padding:8px 16px;border-radius:5px;cursor:pointer;">
-                            В работе
-                        </button>
-                    </form>
+                    {% if not archive %}
+                        <form method="post" action="/delete/{{ app.id }}" style="display:inline;">
+                            <button type="submit" style="background:#b0b0b0;color:#fff;border:none;padding:8px 16px;border-radius:5px;cursor:pointer;">
+                                В работе
+                            </button>
+                        </form>
+                    {% else %}
+                        <span style="color: green;">Выполнено</span>
+                    {% endif %}
                 </td>
             </tr>
             {% endfor %}

@@ -29,15 +29,16 @@ def get_db():
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [KeyboardButton("Start")],
-        [KeyboardButton("Обновить фото")]
+        [KeyboardButton("Обновить фото")],
+        [KeyboardButton("Дополнить заявку")]
     ]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text(
-        "Приветствую! Для подачи заявки нажмите Start.\nДля обновления фото по заявке — Обновить фото.",
+        "Приветствую! Для подачи заявки нажмите Start.\nДля обновления фото по заявке — Обновить фото.\nДля дополнения текста — Дополнить заявку.",
         reply_markup=reply_markup
     )
 
-def delete_application_by_id(app_id):
+def mark_application_done(app_id):
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute("SELECT chat_id, name FROM applications WHERE application_id = ?", (app_id,))
@@ -46,7 +47,7 @@ def delete_application_by_id(app_id):
         conn.close()
         return None
     chat_id, name = row['chat_id'], row['name']
-    cursor.execute("DELETE FROM applications WHERE application_id = ?", (app_id,))
+    cursor.execute("UPDATE applications SET status = 'done' WHERE application_id = ?", (app_id,))
     conn.commit()
     conn.close()
     return chat_id, name
@@ -57,9 +58,10 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
     match = re.match(r'Заявка\s+([a-f0-9]{8})\s+выполнена', text, re.IGNORECASE)
     if match:
         app_id = match.group(1)
-        result = delete_application_by_id(app_id)
+        result = mark_application_done(app_id)
         if not result:
             await update.message.reply_text(f'Заявка {app_id} не найдена в базе данных')
+            return
         chat_id, name = result
         try:
             await context.bot.send_message(
@@ -77,18 +79,61 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text('Введите уникальный идентификатор заявки:')
         return
     if state == 'wait_update_id':
-        context.user_data['update_id'] = text
+        context.user_data['update_id'] = text.lower()
         context.user_data['state'] = 'wait_update_photo'
         await update.message.reply_text("Отправьте новое фото для заявки.")
+        return
+    if text.lower() == 'дополнить заявку':
+        context.user_data.clear()
+        context.user_data['state'] = 'wait_append_id'
+        await update.message.reply_text('Введите уникальный идентификатор заявки, которую хотите дополнить:')
+        return
+    if state == 'wait_append_id':
+        context.user_data['append_id'] = text.lower()
+        context.user_data['state'] = 'wait_append_text'
+        await update.message.reply_text('Введите дополнительный текст для заявки:')
+        return
+    if state == 'wait_append_text':
+        application_id = context.user_data['append_id']
+        username = update.effective_user.username
+        extra_text = text
+        data = {
+            "application_id": application_id,
+            "username": username,
+            "extra_text": extra_text
+        }
+        server_url = "http://127.0.0.1:5000/append_details"
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.post(server_url, json=data) as response:
+                    if response.status == 200:
+                        await update.message.reply_text("Текст успешно добавлен к заявке!")
+                    else:
+                        await update.message.reply_text("Ошибка: заявка не найдена или не принадлежит вам.")
+        except Exception as e:
+            await update.message.reply_text("Ошибка при дополнении заявки. Попробуйте позже.")
+        context.user_data.clear()
         return
 
     if text.lower() == 'start':
         context.user_data.clear()
         context.user_data['state'] = 'wait_name'
-        await update.message.reply_text('Введите Фамилию:')
+        await update.message.reply_text('Введите ФИО:')
         return
+    
     if state == 'wait_name':
         context.user_data['name'] = text
+        context.user_data['state'] = 'wait_emiac_password'
+        await update.message.reply_text('Теперь введите пароль от ЕМИАС:')
+        return
+    if state == 'wait_emiac_password':
+        context.user_data['emiac_password'] = text
+        context.user_data['state'] = 'wait_ip'
+        await update.message.reply_text('Теперь введите IP адрес компьютера:')
+        return
+    if state == 'wait_ip':
+        context.user_data['ip_address'] = text
         context.user_data['state'] = 'wait_department'
         await update.message.reply_text('Теперь введите отделение:')
         return
@@ -103,7 +148,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [[KeyboardButton('✅ Done')]]
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
         await update.message.reply_text(
-            "Если хотите добавить фото, отправьте их сейчас. Когда всё готово, нажмите Done.",
+            "Если хотите добавить скриншот(фото) ошибки, отправьте их сейчас. Когда всё готово, нажмите Done.",
             reply_markup=reply_markup
         )
         return
@@ -156,32 +201,38 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     application_id = str(uuid.uuid4())[:8]
     name = context.user_data.get('name', '')
+    ip = context.user_data.get('ip_address', '')
+    emiac = context.user_data.get('emiac_password', '')
     department = context.user_data.get('department', '')
     details = context.user_data.get('details', '')
     photos = context.user_data.get('photos', [])
-    username = update.effective_user.username
+    username = update.effective_user.username or ""
 
     data = {
     'name': name,
+    'ip': ip,
+    'emiac': emiac,
     'department': department,
     'details': details,
     'photos': photos,
     'chat_id': update.effective_user.id,
     'username': username,
-    'application_id': application_id
+    'application_id': application_id,
+    'status': 'active'
     }
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(SERVER_URL, json=data) as response:
                 response.raise_for_status()
-        await update.message.reply_text(f"Ваш уникальный идентификатор заявки: {application_id}")
+        await update.message.reply_text(f"Ваша заявка принята в работу\nУникальный идентификатор заявки: {application_id}")
         keyboard = [
             [KeyboardButton("Start")],
-            [KeyboardButton("Обновить фото")]
+            [KeyboardButton("Обновить фото")],
+            [KeyboardButton("Дополнить заявку")]
         ]
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
         await update.message.reply_text(
-            "Чтобы подать новую заявку, нажмите Start.\nДля обновления фото по заявке — Обновить фото.",
+            "Чтобы подать новую заявку, нажмите Start.\nДля обновления скриншота(фото) по заявке — Обновить фото.\nДля дополнения текста — Дополнить заявку.",
             reply_markup=reply_markup
         )
         context.user_data.clear()

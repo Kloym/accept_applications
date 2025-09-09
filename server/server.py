@@ -21,12 +21,15 @@ def get_db():
 def add_application():
     data = request.get_json()
     name = data.get('name')
+    ip = data.get('ip')
+    emiac = data.get('emiac')
     department = data.get('department')
     details = data.get('details')
     application_id = data.get('application_id')
     photos_b64 = data.get('photos', [])
     username = data.get('username')
     chat_id = data.get('chat_id')
+    status = data.get('status', 'active')
 
     photo_paths = []
     for idx, photo_b64 in enumerate(photos_b64):
@@ -39,18 +42,18 @@ def add_application():
     conn = get_db()
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO applications (name, department, details, username, photos, application_id, chat_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (name, department, details, username, json.dumps(photo_paths), application_id, chat_id)
+        "INSERT INTO applications (name, department, details, username, photos, application_id, chat_id, status, ip, emiac) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (name, department, details, username, json.dumps(photo_paths), application_id, chat_id, status, ip, emiac)
     )
     conn.commit()
     conn.close()
     return jsonify({'message': 'Заявка добавлена'}), 201
 
-@app.route('/applications', methods=['GET'])
-def get_applications():
+@app.route('/applications')
+def get_active_applications():
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("SELECT * FROM applications")
+    cur.execute("SELECT * FROM applications WHERE status = 'active'")
     rows = cur.fetchall()
     applications = []
     for row in rows:
@@ -59,7 +62,22 @@ def get_applications():
         app_data['photo_urls'] = [f"/uploads/{p}" for p in photo_paths]
         applications.append(app_data)
     conn.close()
-    return render_template('applications.html', applications=applications)
+    return render_template('applications.html', applications=applications, archive=False)
+
+@app.route('/archive')
+def get_archive():
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM applications WHERE status = 'done'")
+    rows = cur.fetchall()
+    applications = []
+    for row in rows:
+        app_data = dict(row)
+        photo_paths = json.loads(app_data.get('photos', '[]'))
+        app_data['photo_urls'] = [f"/uploads/{p}" for p in photo_paths]
+        applications.append(app_data)
+    conn.close()
+    return render_template('applications.html', applications=applications, archive=True)
 
 @app.route('/delete/<int:application_id>', methods=['POST'])
 def delete_application(application_id):
@@ -101,6 +119,29 @@ def update_photo():
     conn.close()
     return jsonify({'message': 'Фото обновлено'}), 200
 
+@app.route('/append_details', methods=['POST'])
+def append_details():
+    data = request.get_json()
+    application_id = data.get('application_id')
+    username = data.get('username')
+    extra_text = data.get('extra_text')
+
+    print("application_id:", application_id, "username:", username)
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT details FROM applications WHERE application_id=? AND lower(username)=lower(?)", (application_id, username))
+    row = cur.fetchone()
+    if not row:
+        conn.close()
+        return jsonify({'error': 'Заявка не найдена или не принадлежит вам'}), 404
+
+    old_details = row['details'] or ""
+    new_details = f'{old_details}\n{extra_text}'
+    cur.execute("UPDATE applications SET details=? WHERE application_id=?", (new_details, application_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'message': 'Текст заявки дополнен'}), 200
+
 @app.route('/uploads/<filename>')
 def uploaded_file(filename):
     return send_from_directory(UPLOAD_FOLDER, filename)
@@ -111,11 +152,14 @@ if __name__ == '__main__':
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         application_id TEXT,
         chat_id TEXT,
+        emiac TEXT,
+        ip TEXT,
         name TEXT,
         department TEXT,
         details TEXT,
         username TEXT,
-        photos TEXT
+        photos TEXT,
+        status TEXT DEFAULT 'active'
     )''')
     conn.close()
     app.run(debug=True)
