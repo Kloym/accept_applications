@@ -2,7 +2,8 @@ import os
 import base64
 import sqlite3
 import json
-from flask import Flask, request, jsonify, send_from_directory, render_template, redirect, url_for
+from datetime import datetime
+from flask import Flask, request, jsonify, send_from_directory, render_template, redirect, url_for, request
 
 app = Flask(__name__)
 UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), 'uploads')
@@ -39,11 +40,13 @@ def add_application():
             f.write(base64.b64decode(photo_b64))
         photo_paths.append(filename)
 
+    created_at = datetime.now().strftime('%Y-%m-%d %H:%M')
+
     conn = get_db()
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO applications (name, department, details, username, photos, application_id, chat_id, status, ip, emiac) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (name, department, details, username, json.dumps(photo_paths), application_id, chat_id, status, ip, emiac)
+        "INSERT INTO applications (name, department, details, username, photos, application_id, chat_id, status, ip, emiac, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (name, department, details, username, json.dumps(photo_paths), application_id, chat_id, status, ip, emiac, created_at)
     )
     conn.commit()
     conn.close()
@@ -95,7 +98,7 @@ def delete_application(application_id):
     cur.execute("DELETE FROM applications WHERE id = ?", (application_id,))
     conn.commit()
     conn.close()
-    return redirect(url_for('get_applications'))
+    return redirect(request.referrer or url_for('get_applications'))
 
 @app.route('/update_photo', methods=['POST'])
 def update_photo():
@@ -159,7 +162,9 @@ if __name__ == '__main__':
         details TEXT,
         username TEXT,
         photos TEXT,
-        status TEXT DEFAULT 'active'
+        status TEXT DEFAULT 'active',
+        created_at TEXT,
+        archived_at TEXT
     )''')
     conn.close()
     app.run(debug=True)

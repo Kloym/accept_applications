@@ -53,7 +53,7 @@
     <div class="table-container">
         <table>
             <tr>
-                <th>Фамилия</th>
+                <th>ФИО</th>
                 <th>Пароль ЕМИАС</th>
                 <th>IP адрес</th>
                 <th>Отделение</th>
@@ -61,7 +61,14 @@
                 <th>Фото</th>
                 <th>Telegram</th>
                 <th>Уникальный ID</th>
+                {% if archive %}
+                    <th>Дата поступления</th>
+                    <th>Дата архивации</th>
+                {% endif %}
                 <th>Статус</th>
+                {% if archive %}
+                    <th>Удалить</th>
+                {% endif %}
             </tr>
             {% for app in applications %}
             <tr>
@@ -91,17 +98,26 @@
                 <td style="font-size: 2em; font-weight: bold; color: #222; letter-spacing: 2px; text-align: center;">
                     {{ app.application_id }}
                 </td>
+                {% if archive %}
+                    <td>{{ app.created_at or '—' }}</td>
+                    <td>{{ app.archived_at or '—' }}</td>
+                {% endif %}
                 <td>
                     {% if not archive %}
-                        <form method="post" action="/delete/{{ app.id }}" style="display:inline;">
-                            <button type="submit" style="background:#b0b0b0;color:#fff;border:none;padding:8px 16px;border-radius:5px;cursor:pointer;">
-                                В работе
-                            </button>
-                        </form>
+                        <span style="color: grey;">В работе</span>
                     {% else %}
                         <span style="color: green;">Выполнено</span>
                     {% endif %}
                 </td>
+                {% if archive %}
+                <td>
+                    <form method="post" action="/delete/{{ app.id }}" style="display:inline;">
+                        <button type="submit" style="background:#e74c3c;color:#fff;border:none;padding:4px 10px;border-radius:5px;cursor:pointer;font-size:0.9em;">
+                            ✖
+                        </button>
+                    </form>
+                </td>
+                {% endif %}
             </tr>
             {% endfor %}
         </table>

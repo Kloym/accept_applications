@@ -5,10 +5,12 @@ import sqlite3
 import uuid
 import logging
 import re
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
-from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
+from datetime import datetime
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters, CallbackQueryHandler
 from dotenv import load_dotenv
 import os
+from op import DEPARTMENTS, DEPARTMENTS_PER_PAGE
 
 load_dotenv()
 
@@ -20,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 SERVER_URL = 'http://127.0.0.1:5000/applications'
 TOKEN = os.getenv('TOKEN')
+DEPARTMENTS = sorted(DEPARTMENTS)
 
 def get_db():
     conn = sqlite3.connect('applications.db')
@@ -47,10 +50,31 @@ def mark_application_done(app_id):
         conn.close()
         return None
     chat_id, name = row['chat_id'], row['name']
-    cursor.execute("UPDATE applications SET status = 'done' WHERE application_id = ?", (app_id,))
+    archived_at = datetime.now().strftime('%Y-%m-%d %H:%M')
+    cursor.execute(
+        "UPDATE applications SET status = 'done', archived_at = ? WHERE application_id = ?",
+        (archived_at, app_id)
+    )
     conn.commit()
     conn.close()
     return chat_id, name
+
+def get_departments_inline_keyboard(page=0):
+    start = page * DEPARTMENTS_PER_PAGE
+    end = start + DEPARTMENTS_PER_PAGE
+    departments_page = DEPARTMENTS[start:end]
+    keyboard = [
+        [InlineKeyboardButton(dep, callback_data=f"dep_idx:{i}")]
+        for i, dep in enumerate(departments_page, start=start)
+    ]
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("⬅️ Назад", callback_data=f"dep_page:{page-1}"))
+    if end < len(DEPARTMENTS):
+        nav.append(InlineKeyboardButton("➡️ Далее", callback_data=f"dep_page:{page+1}"))
+    if nav:
+        keyboard.append(nav)
+    return InlineKeyboardMarkup(keyboard)
 
 
 async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -71,7 +95,7 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
         except Exception as e:
             pass
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip().title()
+    text = update.message.text.strip()
     state = context.user_data.get("state")
 
     if text.lower() == 'обновить фото':
@@ -135,12 +159,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if state == 'wait_ip':
         context.user_data['ip_address'] = text
         context.user_data['state'] = 'wait_department'
-        await update.message.reply_text('Теперь введите отделение:')
-        return
-    if state == 'wait_department':
-        context.user_data['department'] = text
-        context.user_data['state'] = 'wait_details'
-        await update.message.reply_text('Теперь опишите проблему:')
+        context.user_data['dep_page'] = 0
+        await update.message.reply_text(
+            "Выберите отделение:",
+            reply_markup=get_departments_inline_keyboard(0)
+        )
         return
     if state == 'wait_details':
         context.user_data['details'] = text
@@ -239,6 +262,31 @@ async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text("Ошибка при отправке заявки. Попробуйте позже.")
 
+async def department_callback(update: Update, context):
+    query = update.callback_query
+    data = query.data
+    page = context.user_data.get('dep_page', 0)
+
+    if data.startswith("dep_page:"):
+        page = int(data.split(":")[1])
+        context.user_data['dep_page'] = page
+        await query.edit_message_reply_markup(reply_markup=get_departments_inline_keyboard(page))
+        await query.answer()
+        return
+
+    if data.startswith("dep_idx:"):
+        dep_index = int(data.split(":", 1)[1])
+        department = DEPARTMENTS[dep_index]
+        context.user_data['department'] = department
+        context.user_data['state'] = 'wait_details'
+        await query.edit_message_text(f"Вы выбрали: {department}")
+        await context.bot.send_message(
+            chat_id=update.effective_user.id,
+            text="Теперь опишите проблему:"
+        )
+        await query.answer()
+        return
+
 def main():
     application = Application.builder().token(TOKEN).build()
     application.add_handler(CommandHandler('done', done))
@@ -247,6 +295,7 @@ def main():
     filters.Regex(r'Заявка\s+[a-f0-9]{8}\s+выполнена'), handle_group_message))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    application.add_handler(CallbackQueryHandler(department_callback))
     application.run_polling()
 
 if __name__ == '__main__':
