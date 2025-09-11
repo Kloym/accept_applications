@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 SERVER_URL = 'http://127.0.0.1:5000/applications'
 TOKEN = os.getenv('TOKEN')
 DEPARTMENTS = sorted(DEPARTMENTS)
+NOTIFY_CHAT_IDS = [308035415]
 
 def get_db():
     conn = sqlite3.connect('applications.db')
@@ -248,6 +249,14 @@ async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
             async with session.post(SERVER_URL, json=data) as response:
                 response.raise_for_status()
         await update.message.reply_text(f"Ваша заявка принята в работу\nУникальный идентификатор заявки: {application_id}")
+        for notify_id in NOTIFY_CHAT_IDS:
+            try:
+                await context.bot.send_message(
+                    chat_id=notify_id,
+                    text='Вам поступила новая заявка'
+                )
+            except Exception as e:
+                print(f"Ошибка при отправке уведомления: {e}")
         keyboard = [
             [KeyboardButton("Start")],
             [KeyboardButton("Обновить фото")],
