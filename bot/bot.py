@@ -4,6 +4,7 @@ import aiohttp
 import sqlite3
 import uuid
 import logging
+import string
 import re
 from datetime import datetime
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
@@ -60,10 +61,17 @@ def mark_application_done(app_id):
     conn.close()
     return chat_id, name
 
-def get_departments_inline_keyboard(page=0):
+def filter_departments_by_letter(departments, letter):
+    return [dep for dep in departments if dep.upper().startswith(letter.upper())]
+
+def get_departments_inline_keyboard(page=0, filter_letter=None):
+    if filter_letter:
+        depatments = filter_departments_by_letter(DEPARTMENTS, filter_letter)
+    else:
+        depatments = DEPARTMENTS
     start = page * DEPARTMENTS_PER_PAGE
     end = start + DEPARTMENTS_PER_PAGE
-    departments_page = DEPARTMENTS[start:end]
+    departments_page = depatments[start:end]
     keyboard = [
         [InlineKeyboardButton(dep, callback_data=f"dep_idx:{i}")]
         for i, dep in enumerate(departments_page, start=start)
@@ -75,6 +83,12 @@ def get_departments_inline_keyboard(page=0):
         nav.append(InlineKeyboardButton("➡️ Далее", callback_data=f"dep_page:{page+1}"))
     if nav:
         keyboard.append(nav)
+    used_letters = sorted(set(dep[0].upper() for dep in DEPARTMENTS))
+    letters_per_row = 7
+    letter_buttons = [InlineKeyboardButton(letter, callback_data=f"dep_letter:{letter}") for letter in used_letters]
+    letter_rows = [letter_buttons[i:i+letters_per_row] for i in range(0, len(letter_buttons), letters_per_row)]
+    keyboard.extend(letter_rows)
+    keyboard.append([InlineKeyboardButton("Все", callback_data="dep_letter:all")])
     return InlineKeyboardMarkup(keyboard)
 
 
@@ -275,17 +289,22 @@ async def department_callback(update: Update, context):
     query = update.callback_query
     data = query.data
     page = context.user_data.get('dep_page', 0)
+    filter_letter = context.user_data.get('dep_filter')
+    if filter_letter:
+        departments = filter_departments_by_letter(DEPARTMENTS, filter_letter)
+    else:
+        departments = DEPARTMENTS
 
     if data.startswith("dep_page:"):
         page = int(data.split(":")[1])
         context.user_data['dep_page'] = page
-        await query.edit_message_reply_markup(reply_markup=get_departments_inline_keyboard(page))
+        await query.edit_message_reply_markup(reply_markup=get_departments_inline_keyboard(page, filter_letter=filter_letter))
         await query.answer()
         return
 
     if data.startswith("dep_idx:"):
         dep_index = int(data.split(":", 1)[1])
-        department = DEPARTMENTS[dep_index]
+        department = departments[dep_index]
         context.user_data['department'] = department
         context.user_data['state'] = 'wait_details'
         await query.edit_message_text(f"Вы выбрали: {department}")
@@ -293,6 +312,22 @@ async def department_callback(update: Update, context):
             chat_id=update.effective_user.id,
             text="Теперь опишите проблему:"
         )
+        await query.answer()
+        return
+    if data.startswith('dep_letter:'):
+        letter = data.split(':', 1)[1]
+        if letter == 'all':
+            context.user_data.pop('dep_filter', None)
+            context.user_data['dep_page'] = 0
+            await query.edit_message_reply_markup(
+                reply_markup=get_departments_inline_keyboard(0)
+            )
+        else:
+            context.user_data['dep_filter'] = letter
+            context.user_data['dep_page'] = 0
+            await query.edit_message_reply_markup(
+                reply_markup=get_departments_inline_keyboard(0, filter_letter=letter)
+            )
         await query.answer()
         return
 
