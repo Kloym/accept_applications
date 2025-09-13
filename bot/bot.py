@@ -4,7 +4,6 @@ import aiohttp
 import sqlite3
 import uuid
 import logging
-import string
 import re
 from datetime import datetime
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
