@@ -1,4 +1,4 @@
-@REM @echo off
-@REM cd /d %~dp0
-@REM python bot/bot.py
-@REM pause
+@echo off
+cd /d %~dp0
+poetry run python bot/bot.py
+pause

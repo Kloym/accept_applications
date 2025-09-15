@@ -114,22 +114,34 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if text.lower() == 'обновить фото':
         context.user_data['state'] = 'wait_update_id'
-        await update.message.reply_text('Введите уникальный идентификатор заявки:')
+        await update.message.reply_text(
+            '<b>🔄 Обновление фото</b>\nВведите уникальный идентификатор заявки:',
+            parse_mode='HTML'
+        )
         return
     if state == 'wait_update_id':
         context.user_data['update_id'] = text.lower()
         context.user_data['state'] = 'wait_update_photo'
-        await update.message.reply_text("Отправьте новое фото для заявки.")
+        await update.message.reply_text(
+            '📸 <b>Отправьте новое фото для заявки.</b>',
+            parse_mode='HTML'
+        )
         return
     if text.lower() == 'дополнить заявку':
         context.user_data.clear()
         context.user_data['state'] = 'wait_append_id'
-        await update.message.reply_text('Введите уникальный идентификатор заявки, которую хотите дополнить:')
+        await update.message.reply_text(
+            '<b>📝 Дополнение заявки</b>\nВведите уникальный идентификатор заявки, которую хотите дополнить:',
+            parse_mode='HTML'
+        )
         return
     if state == 'wait_append_id':
         context.user_data['append_id'] = text.lower()
         context.user_data['state'] = 'wait_append_text'
-        await update.message.reply_text('Введите дополнительный текст для заявки:')
+        await update.message.reply_text(
+            '✍️ <b>Введите дополнительный текст для заявки:</b>',
+            parse_mode='HTML'
+        )
         return
     if state == 'wait_append_text':
         application_id = context.user_data['append_id']
@@ -146,9 +158,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             async with aiohttp.ClientSession() as session:
                 async with session.post(server_url, json=data) as response:
                     if response.status == 200:
-                        await update.message.reply_text("Текст успешно добавлен к заявке!")
+                        await update.message.reply_text(
+                            '<b>✅ Текст успешно добавлен к заявке!</b>',
+                            parse_mode='HTML'
+                        )
                     else:
-                        await update.message.reply_text("Ошибка: заявка не найдена или не принадлежит вам.")
+                        await update.message.reply_text(
+                            '<b>❌ Ошибка: заявка не найдена или не принадлежит вам.</b>',
+                            parse_mode='HTML'
+                        )
         except Exception as e:
             await update.message.reply_text("Ошибка при дополнении заявки. Попробуйте позже.")
         context.user_data.clear()
@@ -157,39 +175,50 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text.lower() == 'start':
         context.user_data.clear()
         context.user_data['state'] = 'wait_name'
-        await update.message.reply_text('Введите ФИО:')
+        await update.message.reply_text(
+            '<b>👋 Введите ФИО:</b>',
+            parse_mode='HTML'
+        )
         return
     
     if state == 'wait_name':
         context.user_data['name'] = text
         context.user_data['state'] = 'wait_emiac_password'
-        await update.message.reply_text('Теперь введите пароль от ЕМИАС:')
+        await update.message.reply_text(
+            '<b>🔑 Теперь введите пароль от ЕМИАС:</b>',
+            parse_mode='HTML'
+        )
         return
     if state == 'wait_emiac_password':
         context.user_data['emiac_password'] = text
         context.user_data['state'] = 'wait_ip'
-        await update.message.reply_text('Теперь введите IP адрес компьютера:')
+        await update.message.reply_text(
+            '<b>🌐 Теперь введите IP адрес компьютера:</b>',
+            parse_mode='HTML'
+        )
         return
     if state == 'wait_ip':
         context.user_data['ip_address'] = text
         context.user_data['state'] = 'wait_department'
         context.user_data['dep_page'] = 0
         await update.message.reply_text(
-            "Выберите отделение:",
-            reply_markup=get_departments_inline_keyboard(0)
+            "<b>🗂️ Выберите отделение:</b>",
+            reply_markup=get_departments_inline_keyboard(0),
+            parse_mode='HTML'
         )
         return
     if state == 'wait_details':
         context.user_data['details'] = text
         context.user_data['state'] = 'wait_photos'
-        keyboard = [[KeyboardButton('✅ Done')]]
+        keyboard = [[KeyboardButton('✔️ Done')]]
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
         await update.message.reply_text(
-            "Если хотите добавить скриншот(фото) ошибки, отправьте их сейчас. Когда всё готово, нажмите Done.",
-            reply_markup=reply_markup
+            "<b>🖼️ Если хотите добавить скриншот(фото) ошибки, отправьте их сейчас. Когда всё готово, нажмите Done.</b>",
+            reply_markup=reply_markup,
+            parse_mode='HTML'
         )
         return
-    if state == "wait_photos" and text.lower() in ["done", "✅ done"]:
+    if state == "wait_photos" and text.lower() in ["done", "✔️ done"]:
         await done(update, context)
         return
 
@@ -261,7 +290,11 @@ async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         async with aiohttp.ClientSession() as session:
             async with session.post(SERVER_URL, json=data) as response:
                 response.raise_for_status()
-        await update.message.reply_text(f"Ваша заявка принята в работу\nУникальный идентификатор заявки: {application_id}")
+        await update.message.reply_text(
+            "<b>✅ Ваша заявка принята в работу!</b>\n"
+            "Уникальный идентификатор заявки: <code>{}</code>".format(application_id),
+            parse_mode='HTML'
+        )
         for notify_id in NOTIFY_CHAT_IDS:
             try:
                 await context.bot.send_message(
