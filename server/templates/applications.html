@@ -50,6 +50,13 @@
     <h2 style="text-align:center;">
         {% if archive %}Архив заявок{% else %}Список заявок{% endif %}
     </h2>
+    {% if archive %}
+    <div style="text-align:center; margin-bottom: 20px;">
+        <a href="{{ url_for('export_archive') }}" class="nav-btns" style="background:#2196F3; color:#fff; padding:10px 24px; border-radius:5px; text-decoration:none; font-weight:bold;">
+            ⬇️ Скачать архив в Excel
+        </a>
+    </div>
+    {% endif %}
     <div class="table-container">
         <table>
             <tr>

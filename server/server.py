@@ -3,7 +3,10 @@ import base64
 import sqlite3
 import json
 from datetime import datetime
-from flask import Flask, request, jsonify, send_from_directory, render_template, redirect, url_for, request
+from flask import Flask, request, jsonify, send_from_directory, render_template, redirect, url_for, request, send_file
+import pandas as pd
+from io import BytesIO
+
 
 app = Flask(__name__)
 UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), 'uploads')
@@ -81,6 +84,36 @@ def get_archive():
         applications.append(app_data)
     conn.close()
     return render_template('applications.html', applications=applications, archive=True)
+
+@app.route('/export_archive')
+def export_archive():
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM applications WHERE status = 'done'")
+    rows = cur.fetchall()
+    conn.close()
+    if not rows:
+        return "Нет архивных заявок", 404
+    df = pd.DataFrame([dict(row) for row in rows])
+    df = df[['application_id', 'name', 'department', 'details', 'created_at', 'archived_at']]
+    df = df.rename(columns={
+        'application_id': 'ID',
+        'name': 'ФИО',
+        'department': 'Отделение',
+        'details': 'Проблема',
+        'created_at': 'Создание заявки',
+        'archived_at': 'Дата выполнения'
+    })
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Archive')
+    output.seek(0)
+    return send_file(
+        output,
+        as_attachment=True,
+        download_name='archive.xlsx',
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
 
 @app.route('/delete/<int:application_id>', methods=['POST'])
 def delete_application(application_id):
@@ -167,4 +200,4 @@ if __name__ == '__main__':
         archived_at TEXT
     )''')
     conn.close()
-    app.run(debug=True)
+    app.run(host='0.0.0.0', port=5000, debug=True)
