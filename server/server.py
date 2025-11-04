@@ -24,7 +24,7 @@ def get_db():
 @app.route('/applications', methods=['POST'])
 def add_application():
     data = request.get_json()
-    name = data.get('name')
+    name = data.get('name').title()
     ip = data.get('ip')
     emiac = data.get('emiac')
     department = data.get('department')
