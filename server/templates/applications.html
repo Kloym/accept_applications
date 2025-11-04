@@ -71,6 +71,7 @@
                 {% if archive %}
                     <th>Дата поступления</th>
                     <th>Дата архивации</th>
+                    <th>Исполнитель</th>
                 {% endif %}
                 <th>Статус</th>
                 {% if archive %}
@@ -108,6 +109,7 @@
                 {% if archive %}
                     <td>{{ app.created_at or '—' }}</td>
                     <td>{{ app.archived_at or '—' }}</td>
+                    <td>{{ app.done_by or '—' }}</td>
                 {% endif %}
                 <td>
                     {% if not archive %}

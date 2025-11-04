@@ -24,6 +24,10 @@ SERVER_URL = 'http://127.0.0.1:5000/applications'
 TOKEN = os.getenv('TOKEN')
 DEPARTMENTS = sorted(DEPARTMENTS)
 NOTIFY_CHAT_IDS = [308035415]
+USERNAME_TO_FIO = {
+    "kloym": "Сергеев Алексей Андреевич"
+}
+
 
 def get_db():
     conn = sqlite3.connect('applications.db')
@@ -39,7 +43,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text(
         "<b>Что умеет этот бот?</b>\n\n"
-        "Этот бот предназначен для быстрой и удобной подачи заявок на техническую поддержку в нашей организации.\n\n"
+        "Этот бот предназначен для быстрой и удобной подачи заявок в техническую поддержку КИС ЕМИАС в нашей организации.\n\n"
         "<b>Возможности:</b>\n"
         "📋 Оформление новой заявки с указанием ФИО, отделения, IP-адреса и описанием проблемы.\n"
         "📸 Прикрепление фотографий или скриншотов к заявке.\n"
@@ -57,7 +61,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='HTML'
     )
 
-def mark_application_done(app_id):
+def mark_application_done(app_id, done_by):
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute("SELECT chat_id, name FROM applications WHERE application_id = ?", (app_id,))
@@ -68,8 +72,8 @@ def mark_application_done(app_id):
     chat_id, name = row['chat_id'], row['name']
     archived_at = datetime.now().strftime('%Y-%m-%d %H:%M')
     cursor.execute(
-        "UPDATE applications SET status = 'done', archived_at = ? WHERE application_id = ?",
-        (archived_at, app_id)
+        "UPDATE applications SET status = 'done', archived_at = ?, done_by = ? WHERE application_id = ?",
+        (archived_at, done_by, app_id)
     )
     conn.commit()
     conn.close()
@@ -111,7 +115,9 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
     match = re.match(r'Заявка\s+([a-f0-9]{8})\s+выполнена', text, re.IGNORECASE)
     if match:
         app_id = match.group(1)
-        result = mark_application_done(app_id)
+        username = update.effective_user.username
+        done_by = USERNAME_TO_FIO.get(username, username)
+        result = mark_application_done(app_id, done_by)
         if not result:
             await update.message.reply_text(f'Заявка {app_id} не найдена в базе данных')
             return

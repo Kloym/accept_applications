@@ -95,15 +95,18 @@ def export_archive():
     if not rows:
         return "Нет архивных заявок", 404
     df = pd.DataFrame([dict(row) for row in rows])
-    df = df[['application_id', 'name', 'department', 'details', 'created_at', 'archived_at']]
+    df = df[['application_id', 'name', 'department', 'details', 'created_at', 'archived_at', 'done_by']]
     df = df.rename(columns={
         'application_id': 'ID',
         'name': 'ФИО',
         'department': 'Отделение',
         'details': 'Проблема',
         'created_at': 'Создание заявки',
-        'archived_at': 'Дата выполнения'
+        'archived_at': 'Дата выполнения',
+        'done_by': 'Исполнитель'
     })
+    for col in ['Создание заявки', 'Дата выполнения']:
+        df[col] = pd.to_datetime(df[col], format='%Y-%m-%d %H:%M', errors='coerce').dt.strftime('%d-%m-%Y %H:%M')
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df.to_excel(writer, index=False, sheet_name='Archive')
