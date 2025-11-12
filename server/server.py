@@ -56,6 +56,21 @@ def add_application():
     conn.close()
     return jsonify({'message': 'Заявка добавлена'}), 201
 
+@app.route('/restore/<application_id>', methods=['POST'])
+def restore_application(application_id):
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT chat_id, name FROM applications WHERE application_id = ?", (application_id,))
+    row = cur.fetchone()
+    if not row:
+        conn.close()
+        return "Заявка не найдена", 404
+    chat_id, name = row['chat_id'], row['name']
+    cur.execute("UPDATE applications SET status = 'active', archived_at = NULL, done_by = NULL WHERE application_id = ?", (application_id,))
+    conn.commit()
+    conn.close()
+    return jsonify({'chat_id': chat_id, 'name': name}), 200
+
 @app.route('/set_difficulty/<int:application_id>', methods=['POST'])
 def set_difficulty(application_id):
     new_difficulty = request.form.get('difficulty')
