@@ -159,6 +159,41 @@ async def whisper_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Сообщение отправлено.")
     except Exception as e:
         await update.message.reply_text("Ошибка при отправке сообщения.")
+        
+async def restore_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    args = context.args
+    if not args or len(args[0]) != 8:
+        await update.message.reply_text("Укажите id заявки, например: /e 1234abcd")
+        return
+    app_id = args[0]
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT chat_id, name, status FROM applications WHERE application_id = ?", (app_id,))
+    row = cursor.fetchone()
+    if not row:
+        await update.message.reply_text(f'Заявка {app_id} не найдена в базе данных')
+        conn.close()
+        return
+    chat_id, name, status = row['chat_id'], row['name'], row['status']
+    if status == 'active':
+        await update.message.reply_text(f'Заявка {app_id} уже активна')
+        conn.close()
+        return
+    cursor.execute(
+        "UPDATE applications SET status = 'active', archived_at = NULL, done_by = NULL WHERE application_id = ?",
+        (app_id,)
+    )
+    conn.commit()
+    conn.close()
+    try:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"{name}, ваша заявка <code>{app_id}</code> возвращена в работу!",
+            parse_mode='HTML'
+        )
+        await update.message.reply_text(f'Заявка {app_id} возвращена в работу и пользователь уведомлён.')
+    except Exception as e:
+        await update.message.reply_text("Ошибка при отправке уведомления пользователю.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
@@ -513,6 +548,7 @@ def main():
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CommandHandler('q', finish_command))
     application.add_handler(CommandHandler('w', whisper_command))
+    application.add_handler(CommandHandler('e', restore_command))
     # application.add_handler(MessageHandler(
     # filters.Regex(r'Заявка\s+[a-f0-9]{8}\s+выполнена'), handle_group_message))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
