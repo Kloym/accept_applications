@@ -16,8 +16,8 @@
     table { 
         border-collapse: collapse; 
         margin: 40px auto; 
-        background: #fff; 
-        width: 1500px;
+        background: #fff;
+        width: 1500;
     }
     th, td { 
         border: 1px solid #ccc; 
@@ -74,6 +74,7 @@
                     <th>Исполнитель</th>
                 {% endif %}
                 <th>Статус</th>
+                <th>Сложность</th>
                 {% if archive %}
                     <th>Удалить</th>
                 {% endif %}
@@ -104,7 +105,9 @@
                     {% endif %}
                 </td>
                 <td style="font-size: 2em; font-weight: bold; color: #222; letter-spacing: 2px; text-align: center;">
-                    {{ app.application_id }}
+                    <span class="copy-id" style="cursor:pointer;" onclick="copyToClipboard('{{ app.application_id }}', this)">
+                        {{ app.application_id }}
+                    </span>
                 </td>
                 {% if archive %}
                     <td>{{ app.created_at or '—' }}</td>
@@ -118,9 +121,25 @@
                         <span style="color: green;">Выполнено</span>
                     {% endif %}
                 </td>
+                <td>
+                    {% if not archive %}
+                        <form method="post" action="/set_difficulty/{{ app.id }}">
+                            <select name="difficulty" onchange="this.form.submit()"
+                                title="{% if app.difficulty == 'low' %}Среднее время: 1 день{% elif app.difficulty == 'medium' %}Среднее время: 3-5 дней{% elif app.difficulty == 'high' %}Среднее время: 7 и более дней{% else %}—{% endif %}">
+                                <option value="low" {% if app.difficulty == 'low' %}selected{% endif %} title="Среднее время: 1 день">Низкий</option>
+                                <option value="medium" {% if app.difficulty == 'medium' %}selected{% endif %} title="Среднее время: 3-5 дней">Средний</option>
+                                <option value="high" {% if app.difficulty == 'high' %}selected{% endif %} title="Среднее время: 7 и более дней">Высокий</option>
+                            </select>
+                        </form>
+                    {% else %}
+                        <span>
+                            {% if app.difficulty == 'low' %}Низкий{% elif app.difficulty == 'medium' %}Средний{% elif app.difficulty == 'high' %}Высокий{% else %}—{% endif %}
+                        </span>
+                    {% endif %}
+                </td>
                 {% if archive %}
                 <td>
-                    <form method="post" action="/delete/{{ app.id }}" style="display:inline;">
+                    <form method="post" action="/delete/{{ app.id }}" style="display:inline;" onsubmit="return confirm('Вы уверены, что хотите удалить эту заявку? Это действие необратимо!');">
                         <button type="submit" style="background:#e74c3c;color:#fff;border:none;padding:4px 10px;border-radius:5px;cursor:pointer;font-size:0.9em;">
                             ✖
                         </button>
@@ -130,6 +149,34 @@
             </tr>
             {% endfor %}
         </table>
+    </div>
+    <script>
+    function copyToClipboard(text, el) {
+        if (navigator.clipboard) {
+            navigator.clipboard.writeText(text).then(function() {
+                showCopied(el);
+            });
+        } else {
+            // fallback для старых браузеров
+            var textarea = document.createElement("textarea");
+            textarea.value = text;
+            document.body.appendChild(textarea);
+            textarea.select();
+            document.execCommand("copy");
+            document.body.removeChild(textarea);
+            showCopied(el);
+        }
+    }
+    function showCopied(el) {
+        var popup = document.getElementById('copied-popup');
+        popup.style.display = 'block';
+        setTimeout(function() {
+            popup.style.display = 'none';
+        }, 1000);
+    }
+    </script>
+    <div id="copied-popup" style="display:none; position:fixed; top:30px; left:50%; transform:translateX(-50%); background:#2196F3; color:#fff; padding:8px 18px; border-radius:8px; font-size:1em; z-index:9999; box-shadow:0 2px 8px rgba(0,0,0,0.15);">
+        Ваш id скопирован!
     </div>
 </body>
 </html>

@@ -4,7 +4,6 @@ import aiohttp
 import sqlite3
 import uuid
 import logging
-import re
 from datetime import datetime
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters, CallbackQueryHandler
@@ -23,9 +22,10 @@ logger = logging.getLogger(__name__)
 SERVER_URL = 'http://127.0.0.1:5000/applications'
 TOKEN = os.getenv('TOKEN')
 DEPARTMENTS = sorted(DEPARTMENTS)
-NOTIFY_CHAT_IDS = [308035415]
+NOTIFY_CHAT_IDS = [413685748, 681519443]
 USERNAME_TO_FIO = {
-    "kloym": "Сергеев Алексей Андреевич"
+    "pasheug": "Пашков Евгений Олегович",
+    "NRiskin": "Рискин Никита Дмитриевич"
 }
 
 
@@ -38,7 +38,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [KeyboardButton("Start")],
         [KeyboardButton("Обновить фото")],
-        [KeyboardButton("Дополнить заявку")]
+        [KeyboardButton("Дополнить заявку")],
+        [KeyboardButton("Проверить статус заявки")]
     ]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text(
@@ -110,25 +111,55 @@ def get_departments_inline_keyboard(page=0, filter_letter=None):
     return InlineKeyboardMarkup(keyboard)
 
 
-async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    match = re.match(r'Заявка\s+([a-f0-9]{8})\s+выполнена', text, re.IGNORECASE)
-    if match:
-        app_id = match.group(1)
-        username = update.effective_user.username
-        done_by = USERNAME_TO_FIO.get(username, username)
-        result = mark_application_done(app_id, done_by)
-        if not result:
-            await update.message.reply_text(f'Заявка {app_id} не найдена в базе данных')
-            return
-        chat_id, name = result
-        try:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=f"{name.title()}, ваша заявка выполнена!"
-            )
-        except Exception as e:
-            pass
+async def finish_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    args = context.args
+    if not args or len(args[0]) != 8:
+        await update.message.reply_text("Укажите id заявки, например: /done 1234abcd")
+        return
+    app_id = args[0]
+    username = update.effective_user.username
+    done_by = USERNAME_TO_FIO.get(username, username)
+    result = mark_application_done(app_id, done_by)
+    if not result:
+        await update.message.reply_text(f'Заявка {app_id} не найдена в базе данных')
+        return
+    chat_id, name = result
+    try:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"{name.title()}, ваша заявка <code>{app_id}</code> выполнена!",
+            parse_mode='HTML'
+        )
+    except Exception as e:
+        await update.message.reply_text("Ошибка при отправке уведомления.")
+
+async def whisper_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    args = context.args
+    if not args or len(args) < 2:
+        await update.message.reply_text("Используйте: /w <id> <сообщение>")
+        return
+    app_id = args[0]
+    message_text = " ".join(args[1:])
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT chat_id, name FROM applications WHERE application_id = ?", (app_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        await update.message.reply_text(f"Заявка {app_id} не найдена.")
+        return
+    chat_id, name = row['chat_id'], row['name']
+    sender = update.effective_user.username or "Сотрудник"
+    try:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"Сообщение по вашей заявке <code>{app_id}</code> от @{sender}:\n\nРешение: {message_text}",
+            parse_mode='HTML'
+        )
+        await update.message.reply_text("Сообщение отправлено.")
+    except Exception as e:
+        await update.message.reply_text("Ошибка при отправке сообщения.")
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     state = context.user_data.get("state")
@@ -156,6 +187,31 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode='HTML'
         )
         return
+    if text.lower() == 'проверить статус заявки':
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT application_id, department, details, status FROM applications WHERE chat_id=? AND status='active'",
+            (update.effective_user.id,)
+        )
+        rows = cursor.fetchall()
+        conn.close()
+        if not rows:
+            await update.message.reply_text("У вас нет активных заявок.")
+            return
+        keyboard = [
+            [InlineKeyboardButton(
+                f"{row['application_id']} | {row['details']}",
+                callback_data=f"check_status:{row['application_id']}"
+            )] for row in rows
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(
+            "Выберите заявку для проверки статуса:",
+            reply_markup=reply_markup
+        )
+        return
+
     if state == 'wait_append_id':
         context.user_data['append_id'] = text.lower()
         context.user_data['state'] = 'wait_append_text'
@@ -249,6 +305,62 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if state == "wait_photos" and text.lower() in ["done", "✔️ done"]:
         await done(update, context)
         return
+    
+async def check_status_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    data = query.data
+    if data.startswith("check_status:"):
+        app_id = data.split(":", 1)[1]
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT status, details FROM applications WHERE application_id=? AND chat_id=?",
+            (app_id, query.from_user.id)
+        )
+        row = cursor.fetchone()
+        if not row:
+            await query.answer("Заявка не найдена.", show_alert=True)
+            conn.close()
+            return
+        status = row['status']
+        details = row['details']
+        if status == 'done':
+            await query.edit_message_text(
+                f"Заявка <code>{app_id}</code> уже выполнена и больше не отображается в списке.",
+                parse_mode='HTML'
+            )
+        else:
+            await query.edit_message_text(
+                f"Заявка <code>{app_id}</code>\n"
+                f"Описание: {details}\n"
+                f"Статус: В работе",
+                parse_mode='HTML'
+            )
+        await query.answer()
+        cursor.execute(
+            "SELECT application_id, details FROM applications WHERE chat_id=? AND status='active'",
+            (query.from_user.id,)
+        )
+        rows = cursor.fetchall()
+        conn.close()
+        if rows:
+            keyboard = [
+                [InlineKeyboardButton(
+                    f"{row['application_id']} | {row['details']}",
+                    callback_data=f"check_status:{row['application_id']}"
+                )] for row in rows
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await context.bot.send_message(
+                chat_id=query.from_user.id,
+                text="Выберите заявку для проверки статуса:",
+                reply_markup=reply_markup
+            )
+        else:
+            await context.bot.send_message(
+                chat_id=query.from_user.id,
+                text="У вас нет активных заявок."
+            )
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -334,11 +446,15 @@ async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [
             [KeyboardButton("Start")],
             [KeyboardButton("Обновить фото")],
-            [KeyboardButton("Дополнить заявку")]
+            [KeyboardButton("Дополнить заявку")],
+            [KeyboardButton("Проверить статус заявки")]
         ]
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
         await update.message.reply_text(
-            "Чтобы подать новую заявку, нажмите Start.\nДля обновления скриншота(фото) по заявке — Обновить фото.\nДля дополнения текста — Дополнить заявку.",
+            "Чтобы подать новую заявку, нажмите Start.\n"
+            "Для обновления скриншота(фото) по заявке — Обновить фото.\n"
+            "Для дополнения текста — Дополнить заявку.\n"
+            "Для проверки статуса — Проверьте статус заявки.",
             reply_markup=reply_markup
         )
         context.user_data.clear()
@@ -395,10 +511,13 @@ def main():
     application = Application.builder().token(TOKEN).build()
     application.add_handler(CommandHandler('done', done))
     application.add_handler(CommandHandler('start', start))
-    application.add_handler(MessageHandler(
-    filters.Regex(r'Заявка\s+[a-f0-9]{8}\s+выполнена'), handle_group_message))
+    application.add_handler(CommandHandler('q', finish_command))
+    application.add_handler(CommandHandler('w', whisper_command))
+    # application.add_handler(MessageHandler(
+    # filters.Regex(r'Заявка\s+[a-f0-9]{8}\s+выполнена'), handle_group_message))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    application.add_handler(CallbackQueryHandler(check_status_callback, pattern="^check_status:"))
     application.add_handler(CallbackQueryHandler(department_callback))
     application.run_polling()
 

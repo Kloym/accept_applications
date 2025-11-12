@@ -34,6 +34,7 @@ def add_application():
     username = data.get('username')
     chat_id = data.get('chat_id')
     status = data.get('status', 'active')
+    difficulty = data.get('difficulty', 'low')
 
     photo_paths = []
     for idx, photo_b64 in enumerate(photos_b64):
@@ -48,12 +49,24 @@ def add_application():
     conn = get_db()
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO applications (name, department, details, username, photos, application_id, chat_id, status, ip, emiac, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (name, department, details, username, json.dumps(photo_paths), application_id, chat_id, status, ip, emiac, created_at)
+        "INSERT INTO applications (name, department, details, username, photos, application_id, chat_id, status, ip, emiac, created_at, difficulty) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (name, department, details, username, json.dumps(photo_paths), application_id, chat_id, status, ip, emiac, created_at, difficulty)
     )
     conn.commit()
     conn.close()
     return jsonify({'message': 'Заявка добавлена'}), 201
+
+@app.route('/set_difficulty/<int:application_id>', methods=['POST'])
+def set_difficulty(application_id):
+    new_difficulty = request.form.get('difficulty')
+    if new_difficulty not in ['low', 'medium', 'high']:
+        return "Некорректное значение сложности", 400
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("UPDATE applications SET difficulty=? WHERE id=?", (new_difficulty, application_id))
+    conn.commit()
+    conn.close()
+    return redirect(request.referrer or url_for('get_active_applications'))
 
 @app.route('/applications')
 def get_active_applications():
@@ -200,7 +213,9 @@ if __name__ == '__main__':
         photos TEXT,
         status TEXT DEFAULT 'active',
         created_at TEXT,
-        archived_at TEXT
+        archived_at TEXT,
+        done_by TEXT,
+        difficulty
     )''')
     conn.close()
     app.run(host='0.0.0.0', port=5000, debug=True)
