@@ -3,32 +3,22 @@
 <head>
     <meta charset="UTF-8">
     <title>{% if archive %}Архив заявок{% else %}Список заявок{% endif %}</title>
-    <meta http-equiv="refresh" content="10">
+    <meta http-equiv="refresh" content="25">
     <style>
-    body { font-family: Arial, sans-serif; background: #f5f5f5; }
-    .table-container {
-      width: 100%;
-      max-height: 600px;
-      overflow: auto;
-      margin: 40px auto;
-      border: 1px solid #ccc;
+    :root {
+        --th-padding-y: 6px;
     }
-    table { 
-        border-collapse: collapse; 
-        margin: 40px auto; 
-        background: #fff;
-        width: 1500;
+    body { 
+        font-family: Arial, sans-serif; 
+        background: #f5f5f5; 
+        margin: 0; 
+        padding: 0 20px;
     }
-    th, td { 
-        border: 1px solid #ccc; 
-        padding: 16px 24px; 
-        text-align: center; 
-        font-size: 1.1em;
-    }
-    th { background: #4CAF50; color: #fff; }
-    img { max-width: 140px; max-height: 140px; }
     h2 { text-align: center; }
-    .nav-btns { text-align: center; margin: 20px 0; }
+    .nav-btns { 
+        text-align: center; 
+        margin: 20px 0; 
+    }
     .nav-btns a {
         display: inline-block;
         margin: 0 10px;
@@ -40,6 +30,165 @@
         font-weight: bold;
     }
     .nav-btns a.active { background: #357a38; }
+
+    .download-link {
+        text-align:center; 
+        margin-bottom: 20px;
+    }
+    .download-link a {
+        background:#2196F3; 
+        color:#fff; 
+        padding:10px 24px; 
+        border-radius:5px; 
+        text-decoration:none; 
+        font-weight:bold;
+    }
+
+    .table-container {
+      width: 100%;
+      max-height: 80vh;
+      overflow: auto;
+      margin: 20px auto 40px;
+      border: 1px solid #ccc;
+      background: #fff;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+
+    table { 
+        border-collapse: collapse; 
+        width: 100%;
+        table-layout: fixed;
+    }
+
+    th {
+        background: #4CAF50; 
+        color: #fff; 
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        position: relative; 
+        padding-top: var(--th-padding-y, 6px);
+        padding-bottom: var(--th-padding-y, 6px);
+        padding-left: 8px;
+        padding-right: 8px;
+        font-size: 0.95em;
+        line-height: 1.1;
+    }
+    td { 
+        border: 1px solid #ccc; 
+        padding: 12px 16px;
+        text-align: left;
+        font-size: 1em;
+        overflow-wrap: break-word;
+        word-wrap: break-word; 
+    }
+
+    td.center-align {
+        text-align: center;
+    }
+
+    td.center-align .photo-link img {
+        cursor: zoom-in;
+    }
+
+    .resize-handle {
+    position: absolute;
+    top: 0;
+    right: -5px;
+    width: 10px;
+    height: 100%;
+    cursor: col-resize;
+    z-index: 20;
+    }   
+
+    col.col-fio { width: 12%; }
+    col.col-emiac { width: 8%; }
+    col.col-ip { width: 8%; }
+    col.col-department { width: 12%; }
+    col.col-details { width: 20%; }
+    col.col-photo { width: 10%; }
+    col.col-telegram { width: 4%; }
+    col.col-uid { width: 8%; }
+    col.col-dates { width: 9%; }
+    col.col-status { width: 8%; }
+    col.col-difficulty { width: 8%; }
+    col.col-delete { width: 5%; }
+
+    img { max-width: 120px; max-height: 150px; border-radius: 4px; }
+
+    #copied-popup {
+        display:none; 
+        position:fixed; 
+        top:30px; 
+        left:50%; 
+        transform:translateX(-50%); 
+        background:#2196F3; 
+        color:#fff; 
+        padding:8px 18px; 
+        border-radius:8px; 
+        font-size:1em; 
+        z-index:9999; 
+        box-shadow:0 2px 8px rgba(0,0,0,0.15);
+    }
+
+    .modal {
+      display: none;
+      position: fixed;
+      z-index: 1000;
+      padding-top: 50px; 
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      overflow: auto;
+      background-color: rgb(0,0,0);
+      background-color: rgba(0,0,0,0.9);
+      cursor: zoom-out;
+    }
+
+    .modal-content {
+      margin: auto;
+      display: block;
+      max-width: 90%;
+      max-height: 90vh;
+      animation-name: zoom;
+      animation-duration: 0.3s;
+      cursor: default;
+    }
+
+    @keyframes zoom {
+      from {transform:scale(0)}
+      to {transform:scale(1)}
+    }
+
+    .close {
+      position: absolute;
+      top: 15px;
+      right: 35px;
+      color: #f1f1f1;
+      font-size: 40px;
+      font-weight: bold;
+      transition: 0.3s;
+      cursor: pointer;
+    }
+
+    .close:hover,
+    .close:focus {
+      color: #bbb;
+      text-decoration: none;
+    }
+    /* Стили для блока управления */
+    .th-height-control {
+        margin: 10px 0 0 0;
+        text-align: right;
+        font-size: 0.95em;
+        color: #333;
+        user-select: none;
+    }
+    .th-height-control input[type="range"] {
+        vertical-align: middle;
+    }
     </style>
 </head>
 <body>
@@ -47,18 +196,50 @@
         <a href="/applications" class="{% if not archive %}active{% endif %}">Активные заявки</a>
         <a href="/archive" class="{% if archive %}active{% endif %}">Архив заявок</a>
     </div>
-    <h2 style="text-align:center;">
+    <h2>
         {% if archive %}Архив заявок{% else %}Список заявок{% endif %}
     </h2>
     {% if archive %}
-    <div style="text-align:center; margin-bottom: 20px;">
-        <a href="{{ url_for('export_archive') }}" class="nav-btns" style="background:#2196F3; color:#fff; padding:10px 24px; border-radius:5px; text-decoration:none; font-weight:bold;">
+    <div class="download-link">
+        <a href="{{ url_for('export_archive') }}">
             ⬇️ Скачать архив в Excel
         </a>
     </div>
     {% endif %}
-    <div class="table-container">
+
+    <!-- Блок управления высотой заголовка -->
+    <div class="th-height-control">
+        <label>
+            Высота заголовка:&nbsp;
+            <input type="range" id="thHeight" min="2" max="24" value="6">
+            <span id="thHeightValue">6</span> px
+        </label>
+    </div>
+
+    <div class="table-container" id="table-container" data-view-key="{% if archive %}archive{% else %}active{% endif %}">
         <table>
+            <colgroup>
+                <col class="col-fio">
+                <col class="col-emiac">
+                <col class="col-ip">
+                <col class="col-department">
+                <col class="col-details">
+                <col class="col-photo">
+                <col class="col-telegram">
+                <col class="col-uid">
+                {% if archive %}
+                    <col class="col-dates">
+                    <col class="col-dates">
+                    <col class="col-fio">
+                {% endif %}
+                <col class="col-status">
+                <col class="col-difficulty">
+                {% if archive %}
+                    <col class="col-delete">
+                {% endif %}
+            </colgroup>
+
+            <thead>
             <tr>
                 <th>ФИО</th>
                 <th>Пароль ЕМИАС</th>
@@ -79,6 +260,8 @@
                     <th>Удалить</th>
                 {% endif %}
             </tr>
+            </thead>
+            <tbody>
             {% for app in applications %}
             <tr>
                 <td>{{ app.name }}</td>
@@ -86,11 +269,11 @@
                 <td>{{ app.ip }}</td>
                 <td>{{ app.department }}</td>
                 <td>{{ app.details | replace('\n', '<br>') | safe }}</td>
-                <td>
+                <td class="center-align">
                     {% if app.photo_urls %}
                         {% for url in app.photo_urls %}
-                            <a href="{{ url }}" target="_blank">
-                                <img src="{{ url }}" alt="Фото" style="max-width:100px;max-height:100px;">
+                            <a href="{{ url }}" class="photo-link">
+                                <img src="{{ url }}" alt="Фото">
                             </a>
                         {% endfor %}
                     {% else %}
@@ -104,7 +287,7 @@
                         Нет username
                     {% endif %}
                 </td>
-                <td style="font-size: 2em; font-weight: bold; color: #222; letter-spacing: 2px; text-align: center;">
+                <td class="center-align" style="font-size: 1.8em; font-weight: bold; color: #222; letter-spacing: 1px;">
                     <span class="copy-id" style="cursor:pointer;" onclick="copyToClipboard('{{ app.application_id }}', this)">
                         {{ app.application_id }}
                     </span>
@@ -121,7 +304,7 @@
                         <span style="color: green;">Выполнено</span>
                     {% endif %}
                 </td>
-                <td>
+                <td class="center-align">
                     {% if not archive %}
                         <form method="post" action="/set_difficulty/{{ app.id }}">
                             <select name="difficulty" onchange="this.form.submit()"
@@ -138,7 +321,7 @@
                     {% endif %}
                 </td>
                 {% if archive %}
-                <td>
+                <td class="center-align">
                     <form method="post" action="/delete/{{ app.id }}" style="display:inline;" onsubmit="return confirm('Вы уверены, что хотите удалить эту заявку? Это действие необратимо!');">
                         <button type="submit" style="background:#e74c3c;color:#fff;border:none;padding:4px 10px;border-radius:5px;cursor:pointer;font-size:0.9em;">
                             ✖
@@ -148,16 +331,50 @@
                 {% endif %}
             </tr>
             {% endfor %}
+            </tbody>
         </table>
+    </div> 
+    <div id="copied-popup">
+        Ваш id скопирован!
+    </div>
+
+    <div id="myModal" class="modal">
+      <span class="close">&times;</span>
+      <img class="modal-content" id="img01">
     </div>
     <script>
+    // Управление высотой заголовка
+    document.addEventListener('DOMContentLoaded', function() {
+        var range = document.getElementById('thHeight');
+        var value = document.getElementById('thHeightValue');
+        var storageKey = 'tableThPaddingY';
+
+        // При загрузке страницы — восстановить значение из localStorage
+        var saved = localStorage.getItem(storageKey);
+        if (saved !== null) {
+            range.value = saved;
+            document.documentElement.style.setProperty('--th-padding-y', saved + 'px');
+            value.textContent = saved;
+        } else {
+            // Если нет сохранённого — взять текущее значение
+            document.documentElement.style.setProperty('--th-padding-y', range.value + 'px');
+            value.textContent = range.value;
+        }
+
+        // При изменении — обновлять и сохранять
+        range.addEventListener('input', function() {
+            document.documentElement.style.setProperty('--th-padding-y', this.value + 'px');
+            value.textContent = this.value;
+            localStorage.setItem(storageKey, this.value);
+        });
+    });
+
     function copyToClipboard(text, el) {
         if (navigator.clipboard) {
             navigator.clipboard.writeText(text).then(function() {
                 showCopied(el);
             });
         } else {
-            // fallback для старых браузеров
             var textarea = document.createElement("textarea");
             textarea.value = text;
             document.body.appendChild(textarea);
@@ -167,16 +384,156 @@
             showCopied(el);
         }
     }
+
     function showCopied(el) {
         var popup = document.getElementById('copied-popup');
         popup.style.display = 'block';
+        popup.style.opacity = '1'; 
         setTimeout(function() {
-            popup.style.display = 'none';
+            popup.style.opacity = '0';
+            setTimeout(() => { popup.style.display = 'none'; }, 300); 
         }, 1000);
     }
+
+    (function() {
+        const container = document.getElementById('table-container');
+        if (!container) return;
+
+        const scrollKey = 'tableScrollTop';
+
+        window.addEventListener('load', () => {
+            const savedScrollTop = sessionStorage.getItem(scrollKey);
+            if (savedScrollTop) {
+                container.scrollTop = parseInt(savedScrollTop, 10);
+                sessionStorage.removeItem(scrollKey); 
+            }
+        });
+
+        window.addEventListener('beforeunload', () => {
+            if (container.scrollTop > 0) {
+                 sessionStorage.setItem(scrollKey, container.scrollTop);
+            }
+        });
+    })();
+
+    (function() {
+        document.addEventListener('DOMContentLoaded', function() {
+            const container = document.getElementById('table-container');
+            if (!container) return;
+
+            function getStorageKey() {
+                const viewKey = container.dataset.viewKey || 'default';
+                return `tableColumnWidths_${viewKey}`;
+            }
+
+            const table = container.querySelector('table');
+            if (!table) return;
+
+            const cols = Array.from(table.querySelectorAll('colgroup > col'));
+            const headers = Array.from(table.querySelectorAll('th'));
+
+            function loadColumnWidths() {
+                const storageKey = getStorageKey();
+                const savedWidths = localStorage.getItem(storageKey);
+                if (!savedWidths) return;
+
+                const widths = JSON.parse(savedWidths);
+                if (widths.length === cols.length) {
+                    cols.forEach((col, index) => {
+                        if (widths[index]) {
+                            col.style.width = widths[index];
+                        }
+                    });
+                } else {
+                    console.warn('Кол-во сохраненных колонок не совпадает, сброс настроек.');
+                    localStorage.removeItem(storageKey);
+                }
+            }
+
+            function saveColumnWidths() {
+                const storageKey = getStorageKey();
+                const widths = cols.map(col => col.style.width || '');
+                localStorage.setItem(storageKey, JSON.stringify(widths));
+            }
+
+            loadColumnWidths();
+
+            headers.forEach((header, index) => {
+                if (index >= cols.length - 1) return;
+
+                const handle = document.createElement('div');
+                handle.className = 'resize-handle';
+                header.appendChild(handle);
+
+                let startX, startWidth, resizingCol;
+
+                handle.addEventListener('mousedown', function(e) {
+                    e.preventDefault();
+                    startX = e.pageX;
+                    resizingCol = cols[index];
+                    startWidth = resizingCol.getBoundingClientRect().width;
+
+                    function onMouseMove(e) {
+                        if (!resizingCol) return;
+                        const diffX = e.pageX - startX;
+                        const newWidth = Math.max(50, startWidth + diffX);
+                        resizingCol.style.width = newWidth + 'px';
+                    }
+
+                    function onMouseUp() {
+                        resizingCol = null;
+                        document.removeEventListener('mousemove', onMouseMove);
+                        document.removeEventListener('mouseup', onMouseUp);
+                        saveColumnWidths();
+                    }
+
+                    document.addEventListener('mousemove', onMouseMove);
+                    document.addEventListener('mouseup', onMouseUp);
+                });
+            });
+        });
+    })();
+
+
+    (function() {
+        var modal = document.getElementById("myModal");
+        if (!modal) return;
+
+        var modalImg = document.getElementById("img01");
+        var span = document.getElementsByClassName("close")[0];
+
+        function closeModal() {
+          if(modal) modal.style.display = "none";
+        }
+
+        var photoLinks = document.querySelectorAll('.photo-link');
+
+        photoLinks.forEach(function(link) {
+          link.onclick = function(e) {
+            e.preventDefault();
+            modal.style.display = "block";
+            modalImg.src = this.href;
+          }
+        });
+        
+        if (span) {
+            // Закрытие по клику на "X"
+            span.onclick = closeModal;
+        }
+
+        modal.onclick = function(e) {
+          if (e.target === modal) { 
+            closeModal();
+          }
+        }
+
+        document.addEventListener('keydown', function(e) {
+          if (e.key === "Escape" || e.key === "Esc") {
+            closeModal();
+          }
+        });
+    })();
+
     </script>
-    <div id="copied-popup" style="display:none; position:fixed; top:30px; left:50%; transform:translateX(-50%); background:#2196F3; color:#fff; padding:8px 18px; border-radius:8px; font-size:1em; z-index:9999; box-shadow:0 2px 8px rgba(0,0,0,0.15);">
-        Ваш id скопирован!
-    </div>
 </body>
 </html>

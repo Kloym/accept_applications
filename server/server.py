@@ -3,221 +3,73 @@ import base64
 import sqlite3
 import json
 from datetime import datetime
-from flask import Flask, request, jsonify, send_from_directory, render_template, redirect, url_for, request, send_file
+from flask import (
+    Flask, request, jsonify, send_from_directory, 
+    render_template, redirect, url_for, send_file, g
+)
 import pandas as pd
 from io import BytesIO
 
+DATABASE_FILE = 'applications.db'
+UPLOAD_FOLDER_NAME = 'uploads'
+BASE_DIR = os.path.dirname(__file__)
+UPLOAD_FOLDER_PATH = os.path.join(BASE_DIR, UPLOAD_FOLDER_NAME)
 
 app = Flask(__name__)
-UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), 'uploads')
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER_PATH
+app.config['DATABASE'] = DATABASE_FILE
 
-@app.route('/', methods=['GET'])
-def home():
-    return render_template('index.html')
+
+class FileService:
+    def __init__(self, upload_folder):
+        self.upload_folder = upload_folder
+        os.makedirs(self.upload_folder, exist_ok=True)
+
+    def save_photo_from_b64(self, b64_data: str, filename: str) -> str:
+        """Сохраняет base64 строку как файл и возвращает имя файла."""
+        try:
+            photo_path = os.path.join(self.upload_folder, filename)
+            with open(photo_path, "wb") as f:
+                f.write(base64.b64decode(b64_data))
+            return filename
+        except Exception as e:
+            print(f"Ошибка сохранения файла {filename}: {e}")
+            return None
+
+    def delete_photos(self, filenames: list):
+        """Удаляет список файлов из папки uploads."""
+        if not filenames:
+            return
+        for filename in filenames:
+            try:
+                full_path = os.path.join(self.upload_folder, filename)
+                if os.path.exists(full_path):
+                    os.remove(full_path)
+            except Exception as e:
+                print(f"Ошибка удаления файла {filename}: {e}")
+
+file_service = FileService(app.config['UPLOAD_FOLDER'])
 
 def get_db():
-    conn = sqlite3.connect('applications.db')
-    conn.row_factory = sqlite3.Row
-    return conn
+    """Открывает новое соединение с БД, если его еще нет в этом контексте."""
+    if 'db' not in g:
+        g.db = sqlite3.connect(app.config['DATABASE'])
+        g.db.row_factory = sqlite3.Row
+    return g.db
 
-@app.route('/applications', methods=['POST'])
-def add_application():
-    data = request.get_json()
-    name = data.get('name').title()
-    ip = data.get('ip')
-    emiac = data.get('emiac')
-    department = data.get('department')
-    details = data.get('details')
-    application_id = data.get('application_id')
-    photos_b64 = data.get('photos', [])
-    username = data.get('username')
-    chat_id = data.get('chat_id')
-    status = data.get('status', 'active')
-    difficulty = data.get('difficulty', 'low')
+@app.teardown_appcontext
+def close_db(e=None):
+    """Закрывает соединение с БД в конце запроса."""
+    db = g.pop('db', None)
+    if db is not None:
+        db.close()
 
-    photo_paths = []
-    for idx, photo_b64 in enumerate(photos_b64):
-        filename = f"{application_id}_{idx}.jpg"
-        photo_path = os.path.join(UPLOAD_FOLDER, filename)
-        with open(photo_path, "wb") as f:
-            f.write(base64.b64decode(photo_b64))
-        photo_paths.append(filename)
-
-    created_at = datetime.now().strftime('%Y-%m-%d %H:%M')
-
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute(
-        "INSERT INTO applications (name, department, details, username, photos, application_id, chat_id, status, ip, emiac, created_at, difficulty) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (name, department, details, username, json.dumps(photo_paths), application_id, chat_id, status, ip, emiac, created_at, difficulty)
-    )
-    conn.commit()
-    conn.close()
-    return jsonify({'message': 'Заявка добавлена'}), 201
-
-@app.route('/restore/<application_id>', methods=['POST'])
-def restore_application(application_id):
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT chat_id, name FROM applications WHERE application_id = ?", (application_id,))
-    row = cur.fetchone()
-    if not row:
-        conn.close()
-        return "Заявка не найдена", 404
-    chat_id, name = row['chat_id'], row['name']
-    cur.execute("UPDATE applications SET status = 'active', archived_at = NULL, done_by = NULL WHERE application_id = ?", (application_id,))
-    conn.commit()
-    conn.close()
-    return jsonify({'chat_id': chat_id, 'name': name}), 200
-
-@app.route('/set_difficulty/<int:application_id>', methods=['POST'])
-def set_difficulty(application_id):
-    new_difficulty = request.form.get('difficulty')
-    if new_difficulty not in ['low', 'medium', 'high']:
-        return "Некорректное значение сложности", 400
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("UPDATE applications SET difficulty=? WHERE id=?", (new_difficulty, application_id))
-    conn.commit()
-    conn.close()
-    return redirect(request.referrer or url_for('get_active_applications'))
-
-@app.route('/applications')
-def get_active_applications():
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM applications WHERE status = 'active'")
-    rows = cur.fetchall()
-    applications = []
-    for row in rows:
-        app_data = dict(row)
-        photo_paths = json.loads(app_data.get('photos', '[]'))
-        app_data['photo_urls'] = [f"/uploads/{p}" for p in photo_paths]
-        applications.append(app_data)
-    conn.close()
-    return render_template('applications.html', applications=applications, archive=False)
-
-@app.route('/archive')
-def get_archive():
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM applications WHERE status = 'done'")
-    rows = cur.fetchall()
-    applications = []
-    for row in rows:
-        app_data = dict(row)
-        photo_paths = json.loads(app_data.get('photos', '[]'))
-        app_data['photo_urls'] = [f"/uploads/{p}" for p in photo_paths]
-        applications.append(app_data)
-    conn.close()
-    return render_template('applications.html', applications=applications, archive=True)
-
-@app.route('/export_archive')
-def export_archive():
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM applications WHERE status = 'done'")
-    rows = cur.fetchall()
-    conn.close()
-    if not rows:
-        return "Нет архивных заявок", 404
-    df = pd.DataFrame([dict(row) for row in rows])
-    df = df[['application_id', 'name', 'department', 'details', 'created_at', 'archived_at', 'done_by']]
-    df = df.rename(columns={
-        'application_id': 'ID',
-        'name': 'ФИО',
-        'department': 'Отделение',
-        'details': 'Проблема',
-        'created_at': 'Создание заявки',
-        'archived_at': 'Дата выполнения',
-        'done_by': 'Исполнитель'
-    })
-    for col in ['Создание заявки', 'Дата выполнения']:
-        df[col] = pd.to_datetime(df[col], format='%Y-%m-%d %H:%M', errors='coerce').dt.strftime('%d-%m-%Y %H:%M')
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='Archive')
-    output.seek(0)
-    return send_file(
-        output,
-        as_attachment=True,
-        download_name='archive.xlsx',
-        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    )
-
-@app.route('/delete/<int:application_id>', methods=['POST'])
-def delete_application(application_id):
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT photos FROM applications WHERE id = ?", (application_id,))
-    row = cur.fetchone()
-    if row and row['photos']:
-        import json
-        photo_paths = json.loads(row['photos'])
-        for path in photo_paths:
-            full_path = os.path.join(UPLOAD_FOLDER, path)
-            if os.path.exists(full_path):
-                os.remove(full_path)
-    cur.execute("DELETE FROM applications WHERE id = ?", (application_id,))
-    conn.commit()
-    conn.close()
-    return redirect(request.referrer or url_for('get_applications'))
-
-@app.route('/update_photo', methods=['POST'])
-def update_photo():
-    data = request.get_json()
-    application_id = data.get('application_id')
-    username = data.get('username')
-    photo_b64 = data.get('photo')
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM applications WHERE application_id=? AND lower(username)=lower(?)", (application_id, username))
-    row = cur.fetchone()
-    if not row:
-        conn.close()
-        return jsonify({'error': 'Заявка не найдена или не принадлежит вам'}), 404
-    filename = f"{application_id}_updated.jpg"
-    photo_path = os.path.join(UPLOAD_FOLDER, filename)
-    with open(photo_path, "wb") as f:
-        f.write(base64.b64decode(photo_b64))
-    cur.execute("UPDATE applications SET photos=? WHERE application_id=?", (json.dumps([filename]), application_id))
-    conn.commit()
-    conn.close()
-    return jsonify({'message': 'Фото обновлено'}), 200
-
-@app.route('/append_details', methods=['POST'])
-def append_details():
-    data = request.get_json()
-    application_id = data.get('application_id')
-    username = data.get('username')
-    extra_text = data.get('extra_text')
-
-    print("application_id:", application_id, "username:", username)
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT details FROM applications WHERE application_id=? AND lower(username)=lower(?)", (application_id, username))
-    row = cur.fetchone()
-    if not row:
-        conn.close()
-        return jsonify({'error': 'Заявка не найдена или не принадлежит вам'}), 404
-
-    old_details = row['details'] or ""
-    new_details = f'{old_details}\n{extra_text}'
-    cur.execute("UPDATE applications SET details=? WHERE application_id=?", (new_details, application_id))
-    conn.commit()
-    conn.close()
-    return jsonify({'message': 'Текст заявки дополнен'}), 200
-
-@app.route('/uploads/<filename>')
-def uploaded_file(filename):
-    return send_from_directory(UPLOAD_FOLDER, filename)
-
-if __name__ == '__main__':
-    conn = get_db()
-    conn.execute('''CREATE TABLE IF NOT EXISTS applications (
+def init_db():
+    """Инициализирует таблицу в БД."""
+    db = get_db()
+    db.execute('''CREATE TABLE IF NOT EXISTS applications (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        application_id TEXT,
+        application_id TEXT UNIQUE,
         chat_id TEXT,
         emiac TEXT,
         ip TEXT,
@@ -230,7 +82,312 @@ if __name__ == '__main__':
         created_at TEXT,
         archived_at TEXT,
         done_by TEXT,
-        difficulty
+        difficulty TEXT DEFAULT 'low'
     )''')
-    conn.close()
+    db.commit()
+
+
+def repo_create_application(data: dict):
+    """Сохраняет новую заявку в БД."""
+    db = get_db()
+    db.execute(
+        """INSERT INTO applications 
+           (name, department, details, username, photos, application_id, chat_id, status, ip, emiac, created_at, difficulty) 
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            data.get('name'), data.get('department'), data.get('details'), data.get('username'),
+            data.get('photos_json'), data.get('application_id'), data.get('chat_id'),
+            data.get('status'), data.get('ip'), data.get('emiac'),
+            data.get('created_at'), data.get('difficulty')
+        )
+    )
+    db.commit()
+
+def repo_restore_application(application_id: str):
+    """Восстанавливает заявку и возвращает ее данные."""
+    db = get_db()
+    cur = db.execute("SELECT chat_id, name FROM applications WHERE application_id = ?", (application_id,))
+    row = cur.fetchone()
+    if not row:
+        return None
+    
+    cur.execute("UPDATE applications SET status = 'active', archived_at = NULL, done_by = NULL WHERE application_id = ?", (application_id,))
+    db.commit()
+    return dict(row)
+
+def repo_set_difficulty(application_id: int, difficulty: str):
+    db = get_db()
+    db.execute("UPDATE applications SET difficulty=? WHERE id=?", (difficulty, application_id))
+    db.commit()
+
+def repo_get_applications_by_status(status: str) -> list:
+    """Получает список заявок по статусу и обогащает URL-ами фото."""
+    db = get_db()
+    cur = db.execute("SELECT * FROM applications WHERE status = ?", (status,))
+    rows = cur.fetchall()
+    
+    applications = []
+    for row in rows:
+        app_data = dict(row)
+        try:
+            photo_paths = json.loads(app_data.get('photos', '[]'))
+        except (json.JSONDecodeError, TypeError):
+            photo_paths = []
+        
+        app_data['photo_urls'] = [url_for('uploaded_file', filename=p) for p in photo_paths]
+        applications.append(app_data)
+    return applications
+
+def repo_get_raw_apps_for_export() -> list:
+    """Получает "сырые" данные выполненных заявок для экспорта в Excel."""
+    db = get_db()
+    cur = db.execute("SELECT * FROM applications WHERE status = 'done'")
+    rows = cur.fetchall()
+    return [dict(row) for row in rows]
+
+def repo_delete_application(application_id: int) -> list:
+    """Удаляет заявку по ID и возвращает список ее фото для удаления."""
+    db = get_db()
+    cur = db.execute("SELECT photos FROM applications WHERE id = ?", (application_id,))
+    row = cur.fetchone()
+    
+    db.execute("DELETE FROM applications WHERE id = ?", (application_id,))
+    db.commit()
+    
+    if row and row['photos']:
+        try:
+            return json.loads(row['photos'])
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return []
+
+# --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
+def repo_update_photo(application_id: str, username: str, new_filename: str) -> bool:
+    """
+    Обновляет фото для заявки, ДОБАВЛЯЯ новое фото к списку.
+    Проверяет владельца. Возвращает True при успехе.
+    """
+    db = get_db()
+    
+    # 1. Получаем ID И текущий список фото
+    cur = db.execute(
+        "SELECT id, photos FROM applications WHERE application_id=? AND lower(username)=lower(?)", 
+        (application_id, username)
+    )
+    row = cur.fetchone()
+    
+    if not row:
+        # Заявка не найдена или не принадлежит пользователю
+        return False
+    
+    # 2. Парсим старый список фото
+    try:
+        # Если photos = None или пустая строка, '[]' будет по умолчанию
+        current_photos = json.loads(row['photos'] or '[]')
+    except (json.JSONDecodeError, TypeError):
+        current_photos = []
+        
+    # 3. Добавляем новое фото
+    if new_filename not in current_photos:
+        current_photos.append(new_filename)
+    
+    # 4. Сохраняем обновленный список
+    new_photos_json = json.dumps(current_photos)
+    
+    db.execute("UPDATE applications SET photos=? WHERE application_id=?", 
+               (new_photos_json, application_id))
+    db.commit()
+    return True
+# --- КОНЕЦ ИЗМЕНЕНИЯ ---
+
+def repo_append_details(application_id: str, username: str, extra_text: str) -> bool:
+    """Дополняет текст заявки, проверяя владельца. Возвращает True при успехе."""
+    db = get_db()
+    cur = db.execute(
+        "SELECT details FROM applications WHERE application_id=? AND lower(username)=lower(?)", 
+        (application_id, username)
+    )
+    row = cur.fetchone()
+    
+    if not row:
+        return False
+
+    old_details = row['details'] or ""
+    new_details = f'{old_details}\n{extra_text}'
+    
+    db.execute("UPDATE applications SET details=? WHERE application_id=?", 
+               (new_details, application_id))
+    db.commit()
+    return True
+
+@app.route('/', methods=['GET'])
+def home():
+    """Главная страница (веб-интерфейса)."""
+    return render_template('index.html')
+
+@app.route('/applications', methods=['POST'])
+def add_application():
+    """API: Добавить новую заявку (от бота)."""
+    data = request.get_json()
+    if not data:
+        return jsonify({'error': 'No data provided'}), 400
+
+    application_id = data.get('application_id')
+    
+    photo_paths = []
+    for idx, photo_b64 in enumerate(data.get('photos', [])):
+        filename = f"{application_id}_{idx}.jpg"
+        saved_name = file_service.save_photo_from_b64(photo_b64, filename)
+        if saved_name:
+            photo_paths.append(saved_name)
+
+
+    db_data = {
+        'name': data.get('name', '').title(),
+        'ip': data.get('ip'),
+        'emiac': data.get('emiac'),
+        'department': data.get('department'),
+        'details': data.get('details'),
+        'application_id': application_id,
+        'username': data.get('username'),
+        'chat_id': data.get('chat_id'),
+        'status': data.get('status', 'active'),
+        'difficulty': data.get('difficulty', 'low'),
+        'photos_json': json.dumps(photo_paths),
+        'created_at': datetime.now().strftime('%Y-%m-%d %H:%M')
+    }
+
+    try:
+        repo_create_application(db_data)
+        return jsonify({'message': 'Заявка добавлена'}), 201
+    except sqlite3.IntegrityError:
+        return jsonify({'error': 'Application ID already exists'}), 409
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/restore/<application_id>', methods=['POST'])
+def restore_application(application_id):
+    """API: Восстановить заявку (от админа в боте)."""
+    user_data = repo_restore_application(application_id)
+    if not user_data:
+        return jsonify({'error': 'Заявка не найдена'}), 404
+    
+    return jsonify(user_data), 200
+
+@app.route('/set_difficulty/<int:application_id>', methods=['POST'])
+def set_difficulty(application_id):
+    """WEB: Установить сложность (из веб-интерфейса)."""
+    new_difficulty = request.form.get('difficulty')
+    if new_difficulty not in ['low', 'medium', 'high']:
+        return "Некорректное значение сложности", 400
+    
+    repo_set_difficulty(application_id, new_difficulty)
+    return redirect(request.referrer or url_for('get_active_applications'))
+
+@app.route('/applications')
+def get_active_applications():
+    """WEB: Показать страницу с активными заявками."""
+    applications = repo_get_applications_by_status('active')
+    return render_template('applications.html', applications=applications, archive=False)
+
+@app.route('/archive')
+def get_archive():
+    """WEB: Показать страницу с архивом заявок."""
+    applications = repo_get_applications_by_status('done')
+    return render_template('applications.html', applications=applications, archive=True)
+
+@app.route('/export_archive')
+def export_archive():
+    """WEB: Экспорт архива в Excel."""
+    raw_rows = repo_get_raw_apps_for_export()
+    if not raw_rows:
+        return "Нет архивных заявок", 404
+    
+    df = pd.DataFrame(raw_rows)
+    df = df[['application_id', 'name', 'department', 'details', 'created_at', 'archived_at', 'done_by']]
+    df = df.rename(columns={
+        'application_id': 'ID', 'name': 'ФИО', 'department': 'Отделение',
+        'details': 'Проблема', 'created_at': 'Создание заявки',
+        'archived_at': 'Дата выполнения', 'done_by': 'Исполнитель'
+    })
+    for col in ['Создание заявки', 'Дата выполнения']:
+        df[col] = pd.to_datetime(df[col], format='%Y-%m-%d %H:%M', errors='coerce').dt.strftime('%d-%m-%Y %H:%M')
+    
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Archive')
+    output.seek(0)
+    
+    return send_file(
+        output,
+        as_attachment=True,
+        download_name='archive.xlsx',
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+
+@app.route('/delete/<int:application_id>', methods=['POST'])
+def delete_application(application_id):
+    """WEB: Удалить заявку (из архива)."""
+    filenames_to_delete = repo_delete_application(application_id)
+    
+    file_service.delete_photos(filenames_to_delete)
+    
+    return redirect(request.referrer or url_for('get_archive'))
+
+@app.route('/update_photo', methods=['POST'])
+def update_photo():
+    """API: Обновить фото (от бота)."""
+    data = request.get_json()
+    application_id = data.get('application_id')
+    username = data.get('username')
+    photo_b64 = data.get('photo')
+    
+    if not all([application_id, username, photo_b64]):
+        return jsonify({'error': 'Missing required fields'}), 400
+    
+    # Генерируем уникальное имя файла
+    filename = f"{application_id}_updated_{int(datetime.now().timestamp())}.jpg"
+    
+    saved_name = file_service.save_photo_from_b64(photo_b64, filename)
+    if not saved_name:
+         return jsonify({'error': 'Failed to save photo'}), 500
+
+    # Используем обновленную функцию, которая ДОБАВЛЯЕТ фото
+    success = repo_update_photo(application_id, username, saved_name)
+    
+    if not success:
+        file_service.delete_photos([saved_name])
+        return jsonify({'error': 'Заявка не найдена или не принадлежит вам'}), 404
+        
+    return jsonify({'message': 'Фото обновлено'}), 200
+
+@app.route('/append_details', methods=['POST'])
+def append_details():
+    """API: Дополнить текст заявки (от бота)."""
+    data = request.get_json()
+    application_id = data.get('application_id')
+    username = data.get('username')
+    extra_text = data.get('extra_text')
+
+    if not all([application_id, username, extra_text]):
+        return jsonify({'error': 'Missing required fields'}), 400
+
+    success = repo_append_details(application_id, username, extra_text)
+    
+    if not success:
+        return jsonify({'error': 'Заявка не найдена или не принадлежит вам'}), 404
+
+    return jsonify({'message': 'Текст заявки дополнен'}), 200
+
+@app.route('/uploads/<filename>')
+def uploaded_file(filename):
+    """WEB: Отдать сохраненный файл (для <img src=...>)."""
+    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+
+
+if __name__ == '__main__':
+    with app.app_context():
+        init_db()
+    
     app.run(host='0.0.0.0', port=5000, debug=True)
