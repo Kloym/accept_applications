@@ -33,14 +33,10 @@ USERNAME_TO_FIO = {
     "NRiskin": "Рискин Никита Дмитриевич"
 }
 
-# --- 2. Определение Состояний для ConversationHandler ---
-# Убираем "магические строки"
 
 class States(Enum):
-    # Главный роутер (не используется, но полезен для старта)
     START_ROUTES = 0
     
-    # Сценарий: Новая заявка
     START_WAIT_NAME = 1
     START_WAIT_EMIAC = 2
     START_WAIT_IP = 3
@@ -48,19 +44,16 @@ class States(Enum):
     START_WAIT_DETAILS = 5
     START_WAIT_PHOTOS = 6
     
-    # Сценарий: Обновление фото
     UPDATE_WAIT_ID = 10
-    UPDATE_WAIT_PHOTO = 11 # В этом состоянии ждем ЛИБО фото, ЛИБО кнопку "Done"
+    UPDATE_WAIT_PHOTO = 11
     
-    # Сценарий: Дополнение заявки
     APPEND_WAIT_ID = 20
     APPEND_WAIT_TEXT = 21
     
-    # Сценарий: Возврат заявки
+
     RETURN_WAIT_ID = 30
     RETURN_WAIT_REASON = 31
 
-# --- 3. Сервисный слой (Абстракция) ---
 
 class ApiService:
     """
@@ -106,7 +99,6 @@ class ApiService:
         return status == 200
 
     async def restore_application(self, application_id):
-        # ИСПОЛЬЗУЕМ API, А НЕ ПРЯМОЙ ЗАПРОС К БД
         status, data = await self._post_json(f'restore/{application_id}', {})
         if status == 200:
             return data.get('chat_id'), data.get('name')
@@ -192,12 +184,9 @@ class DbService:
         conn.close()
         return (row['status'], row['details']) if row else None
 
-# Инициализируем сервисы
 api_client = ApiService(BASE_SERVER_URL)
 db_service = DbService(DB_FILE)
 
-
-# --- 4. Вспомогательные функции и Валидаторы ---
 
 MAIN_KEYBOARD = ReplyKeyboardMarkup([
         [KeyboardButton("Start")],
@@ -214,7 +203,6 @@ def is_valid_fio(fio):
     return len(parts) >= 2 and all(len(part) >= 2 for part in parts)
 
 def is_valid_ip(ip):
-    # Простая проверка на IP (можно улучшить regex)
     return re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", ip)
 
 def filter_departments_by_letter(departments, letter):
@@ -248,12 +236,9 @@ def get_departments_inline_keyboard(page=0, filter_letter=None):
     return InlineKeyboardMarkup(keyboard)
 
 
-# --- 5. Обработчики Команд (НЕ в диалогах) ---
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Главное меню /start"""
     
-    # Весь текст должен быть ОДНИМ аргументом
     start_text = (
         "<b>Что умеет этот бот?</b>\n\n"
         "Этот бот предназначен для быстрой и удобной подачи заявок в техническую поддержку КИС ЕМИАС в нашей организации.\n\n"
@@ -275,12 +260,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     await update.message.reply_text(
-        text=start_text,  # <--- Передаем одну переменную
+        text=start_text,
         reply_markup=MAIN_KEYBOARD,
         parse_mode='HTML'
     )
     
-    # Завершаем любой активный диалог, если он был
     return ConversationHandler.END
 
 async def finish_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -293,8 +277,7 @@ async def finish_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     app_id = args[0]
     username = update.effective_user.username
     done_by = USERNAME_TO_FIO.get(username, username)
-    
-    # Используем DbService
+
     result = db_service.mark_application_done(app_id, done_by)
     
     if not result:
@@ -350,7 +333,6 @@ async def restore_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     app_id = args[0]
     
-    # Используем ApiService
     result = await api_client.restore_application(app_id)
     
     if not result:
@@ -379,7 +361,6 @@ async def check_status_callback(update: Update, context: ContextTypes.DEFAULT_TY
     if data.startswith("check_status:"):
         app_id = data.split(":", 1)[1]
         
-        # Используем DbService
         result = db_service.get_app_status_for_user(app_id, query.from_user.id)
         
         if not result:
@@ -399,7 +380,6 @@ async def check_status_callback(update: Update, context: ContextTypes.DEFAULT_TY
                 parse_mode='HTML'
             )
         
-        # Показываем список активных заявок снова
         await conv_ask_check_status(update, context, from_callback=True)
 
 async def department_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -461,7 +441,7 @@ async def conv_ask_emiac(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "Пожалуйста, введите ФИО полностью (например: Сергеев Алексей Андреевич)."
         )
-        return States.START_WAIT_NAME # Остаемся в том же состоянии
+        return States.START_WAIT_NAME
     
     context.user_data['name'] = fio
     await update.message.reply_text('<b>🔑 Теперь введите пароль от ЕМИАС:</b>', parse_mode='HTML')
@@ -476,7 +456,6 @@ async def conv_ask_ip(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def conv_ask_department(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Получили IP, показываем меню отделений"""
     ip_address = update.message.text.strip()
-    # НОВАЯ ФУНКЦИЯ: Валидация IP
     if not is_valid_ip(ip_address):
         await update.message.reply_text(
             "<b>❌ Неверный формат IP.</b>\nПожалуйста, введите IP-адрес в формате 123.123.123.123",
@@ -550,7 +529,6 @@ async def conv_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'status': 'active'
     }
     
-    # Используем ApiService
     success = await api_client.post_new_application(data)
 
     if not success:
@@ -558,8 +536,6 @@ async def conv_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.clear()
         return ConversationHandler.END
 
-    # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
-    # Обновленный текст по вашему запросу
     final_text = (
         f"<b>✅ Ваша заявка принята в работу!</b>\n"
         f"Уникальный идентификатор заявки: <code>{application_id}</code>\n\n"
@@ -574,9 +550,6 @@ async def conv_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='HTML',
         reply_markup=MAIN_KEYBOARD
     )
-    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
-    
-    # Уведомляем админов
     for notify_id in NOTIFY_CHAT_IDS:
         try:
             await context.bot.send_message(chat_id=notify_id, text='Вам поступила новая заявка')
@@ -587,8 +560,6 @@ async def conv_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-# --- 7.2 Сценарий: 'Обновить фото' ---
-
 async def conv_ask_update_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Точка входа: Нажата кнопка 'Обновить фото'"""
     context.user_data.clear()
@@ -598,23 +569,17 @@ async def conv_ask_update_id(update: Update, context: ContextTypes.DEFAULT_TYPE)
     )
     return States.UPDATE_WAIT_ID
 
-# --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
 async def conv_ask_update_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Получили ID, просим фото"""
     context.user_data['update_id'] = update.message.text.strip().lower()
-    # Инициализируем список для фото
     context.user_data['update_photos'] = [] 
     await update.message.reply_text(
         '📸 <b>Отправьте новое фото для заявки (можно как файл или как фото).</b>\n'
         'Вы можете отправить несколько. Когда закончите, нажмите Done.',
-        reply_markup=DONE_KEYBOARD, # <--- ДОБАВЛЕНА КЛАВИАТУРА
+        reply_markup=DONE_KEYBOARD,
         parse_mode='HTML'
     )
     return States.UPDATE_WAIT_PHOTO
-
-# --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
-# Старая функция `conv_process_update_photo` разделена на две:
-# 1. `conv_process_update_photo_add` (для добавления фото в список)
 
 async def conv_process_update_photo_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Ловим фото для обновления и добавляем в список"""
@@ -645,10 +610,8 @@ async def conv_process_update_photo_add(update: Update, context: ContextTypes.DE
         logger.error(f"Ошибка при добавлении фото для обновления: {e}")
         await update.message.reply_text("Ошибка при обработке фото. Попробуйте еще раз.")
         
-    # Остаемся в том же состоянии, ожидая еще фото или "Done"
     return States.UPDATE_WAIT_PHOTO
 
-# 2. `conv_process_update_photo_done` (для отправки по кнопке "Done")
 
 async def conv_process_update_photo_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Нажата кнопка 'Done' при обновлении фото. Отправляем все фото из списка."""
@@ -668,7 +631,6 @@ async def conv_process_update_photo_done(update: Update, context: ContextTypes.D
     
     for photo_b64 in photos_b64_list:
         try:
-            # Вызываем API для каждого фото в цикле
             success = await api_client.update_photo(application_id, username, photo_b64)
             if success:
                 success_count += 1
@@ -678,7 +640,6 @@ async def conv_process_update_photo_done(update: Update, context: ContextTypes.D
             logger.error(f"Ошибка при отправке фото {application_id}: {e}")
             fail_count += 1
             
-    # Формируем отчет
     if success_count > 0 and fail_count == 0:
         await update.message.reply_text(f"✅ Все {success_count} фото для заявки <code>{application_id}</code> успешно обновлены!", reply_markup=MAIN_KEYBOARD, parse_mode='HTML')
     elif success_count > 0 and fail_count > 0:
@@ -686,15 +647,10 @@ async def conv_process_update_photo_done(update: Update, context: ContextTypes.D
     elif success_count == 0 and fail_count > 0:
          await update.message.reply_text(f"❌ Ошибка: не удалось обновить фото. Заявка <code>{application_id}</code> не найдена или не принадлежит вам.", reply_markup=MAIN_KEYBOARD, parse_mode='HTML')
     else:
-        # Этот случай (0-0) был обработан в `if not photos_b64_list`
         pass
 
     context.user_data.clear()
     return ConversationHandler.END
-# --- КОНЕЦ ИЗМЕНЕНИЯ ---
-
-
-# --- 7.3 Сценарий: 'Дополнить заявку' ---
 
 async def conv_ask_append_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Точка входа: Нажата кнопка 'Дополнить заявку'"""
@@ -720,7 +676,6 @@ async def conv_process_append_text(update: Update, context: ContextTypes.DEFAULT
     username = update.effective_user.username
     extra_text = update.message.text.strip()
     
-    # Используем ApiService
     success = await api_client.append_details(application_id, username, extra_text)
     
     if success:
@@ -739,12 +694,10 @@ async def conv_process_append_text(update: Update, context: ContextTypes.DEFAULT
     context.user_data.clear()
     return ConversationHandler.END
 
-# --- 7.4 Сценарий: 'Проверить статус заявки' ---
 
 async def conv_ask_check_status(update: Update, context: ContextTypes.DEFAULT_TYPE, from_callback=False):
     """Точка входа: Нажата кнопка 'Проверить статус заявки'"""
     
-    # Используем DbService
     rows = db_service.get_active_apps_by_chat_id(update.effective_user.id)
     
     if not rows:
@@ -759,7 +712,6 @@ async def conv_ask_check_status(update: Update, context: ContextTypes.DEFAULT_TY
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    # Если мы пришли из callback, нельзя редактировать сообщение от юзера, надо отправить новое
     if from_callback:
         await context.bot.send_message(
             chat_id=update.effective_user.id,
@@ -772,17 +724,14 @@ async def conv_ask_check_status(update: Update, context: ContextTypes.DEFAULT_TY
             reply_markup=reply_markup
         )
     
-    # Этот диалог завершается сразу, т.к. продолжение в CallbackQueryHandler
     return ConversationHandler.END
 
 
-# --- 7.5 Сценарий: 'Вернуть заявку в работу' ---
 
 async def conv_ask_return_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Точка входа: Нажата кнопка 'Вернуть заявку в работу'"""
     context.user_data.clear()
     
-    # Используем DbService
     rows = db_service.get_done_apps_by_chat_id(update.effective_user.id, limit=5)
     
     message_text = '<b>♻️ Возврат заявки</b>\n\n'
@@ -814,7 +763,7 @@ async def conv_ask_return_reason(update: Update, context: ContextTypes.DEFAULT_T
             'ID должен состоять ровно из 8 символов. Попробуйте еще раз:',
             parse_mode='HTML'
         )
-         return States.RETURN_WAIT_ID # Остаемся в том же состоянии
+         return States.RETURN_WAIT_ID
              
     context.user_data['return_id'] = application_id
     await update.message.reply_text(
@@ -854,8 +803,6 @@ async def conv_process_return_reason(update: Update, context: ContextTypes.DEFAU
     context.user_data.clear()
     return ConversationHandler.END
 
-# --- 7.6 Общий обработчик выхода ---
-
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """НОВАЯ ФУНКЦИЯ: Выход из любого диалога"""
     context.user_data.clear()
@@ -866,16 +813,13 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-# --- 8. Сборка и запуск бота ---
 
 def main():
     application = Application.builder().token(TOKEN).build()
     
-    # --- Создаем ConversationHandler ---
     
     conv_handler = ConversationHandler(
         entry_points=[
-            # Точки входа в диалоги по кнопкам
             MessageHandler(filters.Text("Start"), conv_ask_name),
             MessageHandler(filters.Text("Обновить фото"), conv_ask_update_id),
             MessageHandler(filters.Text("Дополнить заявку"), conv_ask_append_id),
@@ -883,7 +827,6 @@ def main():
             MessageHandler(filters.Text("Проверить статус заявки"), conv_ask_check_status),
         ],
         states={
-            # Сценарий: Новая заявка
             States.START_WAIT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, conv_ask_emiac)],
             States.START_WAIT_EMIAC: [MessageHandler(filters.TEXT & ~filters.COMMAND, conv_ask_ip)],
             States.START_WAIT_IP: [MessageHandler(filters.TEXT & ~filters.COMMAND, conv_ask_department)],
@@ -894,32 +837,25 @@ def main():
                 MessageHandler(filters.PHOTO | filters.Document.IMAGE, conv_add_photo)
             ],
             
-            # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
-            # Сценарий: Обновление фото
             States.UPDATE_WAIT_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, conv_ask_update_photo)],
             States.UPDATE_WAIT_PHOTO: [
                 MessageHandler(filters.PHOTO | filters.Document.IMAGE, conv_process_update_photo_add),
                 MessageHandler(filters.Text("✔️ Done"), conv_process_update_photo_done)
             ],
-            # --- КОНЕЦ ИЗМЕНЕНИЯ ---
             
-            # Сценарий: Дополнение заявки
             States.APPEND_WAIT_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, conv_ask_append_text)],
             States.APPEND_WAIT_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, conv_process_append_text)],
             
-            # Сценарий: Возврат заявки
             States.RETURN_WAIT_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, conv_ask_return_reason)],
             States.RETURN_WAIT_REASON: [MessageHandler(filters.TEXT & ~filters.COMMAND, conv_process_return_reason)],
         },
         fallbacks=[
             CommandHandler('cancel', cancel)
         ],
-        # TODO: Добавить `persistent=True` и `PicklePersistence` для сохранения состояний
     )
     
     application.add_handler(conv_handler)
     
-    # Обычные команды
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CommandHandler('q', finish_command))
     application.add_handler(CommandHandler('w', whisper_command))
