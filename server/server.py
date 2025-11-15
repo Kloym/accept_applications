@@ -161,7 +161,6 @@ def repo_delete_application(application_id: int) -> list:
             pass
     return []
 
-# --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
 def repo_update_photo(application_id: str, username: str, new_filename: str) -> bool:
     """
     Обновляет фото для заявки, ДОБАВЛЯЯ новое фото к списку.
@@ -169,7 +168,6 @@ def repo_update_photo(application_id: str, username: str, new_filename: str) -> 
     """
     db = get_db()
     
-    # 1. Получаем ID И текущий список фото
     cur = db.execute(
         "SELECT id, photos FROM applications WHERE application_id=? AND lower(username)=lower(?)", 
         (application_id, username)
@@ -177,28 +175,22 @@ def repo_update_photo(application_id: str, username: str, new_filename: str) -> 
     row = cur.fetchone()
     
     if not row:
-        # Заявка не найдена или не принадлежит пользователю
         return False
     
-    # 2. Парсим старый список фото
     try:
-        # Если photos = None или пустая строка, '[]' будет по умолчанию
         current_photos = json.loads(row['photos'] or '[]')
     except (json.JSONDecodeError, TypeError):
         current_photos = []
-        
-    # 3. Добавляем новое фото
+
     if new_filename not in current_photos:
         current_photos.append(new_filename)
     
-    # 4. Сохраняем обновленный список
     new_photos_json = json.dumps(current_photos)
     
     db.execute("UPDATE applications SET photos=? WHERE application_id=?", 
                (new_photos_json, application_id))
     db.commit()
     return True
-# --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
 def repo_append_details(application_id: str, username: str, extra_text: str) -> bool:
     """Дополняет текст заявки, проверяя владельца. Возвращает True при успехе."""
@@ -346,14 +338,12 @@ def update_photo():
     if not all([application_id, username, photo_b64]):
         return jsonify({'error': 'Missing required fields'}), 400
     
-    # Генерируем уникальное имя файла
     filename = f"{application_id}_updated_{int(datetime.now().timestamp())}.jpg"
     
     saved_name = file_service.save_photo_from_b64(photo_b64, filename)
     if not saved_name:
          return jsonify({'error': 'Failed to save photo'}), 500
 
-    # Используем обновленную функцию, которая ДОБАВЛЯЕТ фото
     success = repo_update_photo(application_id, username, saved_name)
     
     if not success:
