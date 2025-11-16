@@ -309,7 +309,7 @@ async def whisper_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await context.bot.send_message(
             chat_id=chat_id,
-            text=f"Сообщение по вашей заявке <code>{app_id}</code> от @{sender}:\n\nРешение: {message_text}",
+            text=f"Сообщение по вашей заявке <code>{app_id}</code> от @{sender}:\n\nРешение:\n{message_text.capitalize()}",
             parse_mode='HTML'
         )
         await update.message.reply_text("Сообщение отправлено.")
@@ -591,7 +591,7 @@ async def conv_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Для обновления скриншота(фото) по заявке — Обновить фото.\n"
         "Для дополнения текста — Дополнить заявку.\n"
         "Для проверки статуса — Проверить статус заявки.\n"
-        "Для возврата заявки - вернуть заявку в работу."
+        "Для возврата заявки - Вернуть заявку в работу."
     )
     
     await context.bot.send_message(
