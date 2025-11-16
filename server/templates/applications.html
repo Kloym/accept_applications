@@ -80,6 +80,7 @@
         text-align: left;
         font-size: 1em;
         overflow-wrap: break-word;
+        vertical-align: top;
     }
 
     td.center-align {
@@ -123,13 +124,36 @@
 
     .photo-gallery {
         display: flex;
-        gap: 5px; 
-        overflow-x: auto; 
+        overflow-x: auto;
+        gap: 8px; 
         padding-bottom: 5px; 
     }
-
-    .photo-gallery a {
+    
+    .photo-item {
+        position: relative; 
         flex-shrink: 0; 
+    }
+    .photo-item .delete-photo-btn {
+        position: absolute;
+        top: -5px;
+        right: -5px;
+        background: #e74c3c;
+        color: white;
+        border: none;
+        border-radius: 50%;
+        width: 20px;
+        height: 20px;
+        font-size: 12px;
+        font-weight: bold;
+        line-height: 20px;
+        text-align: center;
+        cursor: pointer;
+        opacity: 0.8;
+        transition: opacity 0.2s;
+        z-index: 2;
+    }
+    .photo-item:hover .delete-photo-btn {
+        opacity: 1;
     }
 
 
@@ -320,16 +344,27 @@
                 <td>{{ app.details | replace('\n', '<br>') | safe }}</td>
                 
                 <td class="center-align">
-                    {% if app.photo_urls %}
+                    {% if app.photo_objects %}
                         <div class="photo-gallery">
-                        {% for url in app.photo_urls %}
-                            <a href="{{ url }}" class="photo-link">
-                                <img src="{{ url }}" 
-                                     alt="Фото к заявке {{ app.application_id }}" 
-                                     loading="lazy" 
-                                     width="120" 
-                                     height="150">
-                            </a>
+                        {% for photo in app.photo_objects %}
+                            <div class="photo-item">
+                                <a href="{{ photo.url }}" class="photo-link">
+                                    <img src="{{ photo.url }}" 
+                                         alt="Фото к заявке {{ app.application_id }}" 
+                                         loading="lazy" 
+                                         width="120" 
+                                         height="150">
+                                </a>
+                                
+                                {% if not archive %}
+                                <form method="POST" 
+                                      action="{{ url_for('delete_photo', app_id=app.id, filename=photo.filename) }}" 
+                                      onsubmit="return confirm('Удалить это фото?');"
+                                      title="Удалить фото">
+                                    <button type="submit" class="delete-photo-btn">✖</button>
+                                </form>
+                                {% endif %}
+                            </div>
                         {% endfor %}
                         </div>
                     {% else %}
@@ -421,7 +456,6 @@
         {% endif %}
     </div>
     {% endif %}
-
 
     <div id="copied-popup">
         Ваш id скопирован!
@@ -588,15 +622,17 @@
           if(modal) modal.style.display = "none";
         }
 
-        var photoLinks = document.querySelectorAll('.photo-link');
-
-        photoLinks.forEach(function(link) {
-          link.onclick = function(e) {
-            e.preventDefault();
-            modal.style.display = "block";
-            modalImg.src = this.href;
-          }
-        });
+        var tableContainer = document.getElementById("table-container");
+        if (tableContainer) {
+            tableContainer.addEventListener('click', function(e) {
+                var link = e.target.closest('.photo-link');
+                if (link) {
+                    e.preventDefault();
+                    modal.style.display = "block";
+                    modalImg.src = link.href;
+                }
+            });
+        }
         
         if (span) {
             span.onclick = closeModal;

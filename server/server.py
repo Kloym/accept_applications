@@ -20,7 +20,7 @@ app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER_PATH
 app.config['DATABASE'] = DATABASE_FILE
 
-PER_PAGE = 10
+PER_PAGE = 50 
 
 
 class FileService:
@@ -123,10 +123,9 @@ def repo_set_difficulty(application_id: int, difficulty: str):
     db.execute("UPDATE applications SET difficulty=? WHERE id=?", (difficulty, application_id))
     db.commit()
 
-
 def repo_get_applications_paginated(status: str, page: int, per_page: int):
     """
-    Получает список заявок по статусу (с пагинацией) и обогащает URL-ами фото.
+    Получает список заявок по статусу (с пагинацией).
     Возвращает (список заявок, общее кол-во страниц).
     """
     db = get_db()
@@ -138,9 +137,7 @@ def repo_get_applications_paginated(status: str, page: int, per_page: int):
         return [], 1
         
     total_pages = ceil(total_items / per_page)
-    
     offset = (page - 1) * per_page
-    
     order_by = "archived_at DESC" if status == 'done' else "created_at DESC"
     
     query = f"SELECT * FROM applications WHERE status = ? ORDER BY {order_by} LIMIT ? OFFSET ?"
@@ -155,11 +152,14 @@ def repo_get_applications_paginated(status: str, page: int, per_page: int):
         except (json.JSONDecodeError, TypeError):
             photo_paths = []
         
-        app_data['photo_urls'] = [url_for('uploaded_file', filename=p) for p in photo_paths]
+        app_data['photo_objects'] = [
+            {'url': url_for('uploaded_file', filename=p), 'filename': p} 
+            for p in photo_paths
+        ]
+
         applications.append(app_data)
         
     return applications, total_pages
-
 
 
 def repo_get_raw_apps_for_export() -> list:
@@ -185,12 +185,41 @@ def repo_delete_application(application_id: int) -> list:
             pass
     return []
 
+def repo_delete_single_photo(app_id: int, filename_to_delete: str) -> bool:
+    """
+    Удаляет ОДНО фото из списка фотографий заявки.
+    Возвращает True, если файл был найден и удален из БД.
+    """
+    db = get_db()
+    
+    cur = db.execute("SELECT photos FROM applications WHERE id = ?", (app_id,))
+    row = cur.fetchone()
+    if not row:
+        return False
+    
+    try:
+        current_photos = json.loads(row['photos'] or '[]')
+    except (json.JSONDecodeError, TypeError):
+        current_photos = []
+
+    if filename_to_delete not in current_photos:
+        return False
+        
+    new_photos_list = [f for f in current_photos if f != filename_to_delete]
+    new_photos_json = json.dumps(new_photos_list)
+    
+    db.execute("UPDATE applications SET photos = ? WHERE id = ?", (new_photos_json, app_id))
+    db.commit()
+    return True
+
+
 def repo_update_photo(application_id: str, username: str, new_filename: str) -> bool:
     """
     Обновляет фото для заявки, ДОБАВЛЯЯ новое фото к списку.
     Проверяет владельца. Возвращает True при успехе.
     """
     db = get_db()
+    
     cur = db.execute(
         "SELECT id, photos FROM applications WHERE application_id=? AND lower(username)=lower(?)", 
         (application_id, username)
@@ -383,9 +412,28 @@ def delete_application(application_id):
     
     return redirect(request.referrer or url_for('get_archive'))
 
+@app.route('/delete_photo/<int:app_id>/<path:filename>', methods=['POST'])
+def delete_photo(app_id, filename):
+    """WEB: Удаляет одно фото из заявки."""
+    
+    success = repo_delete_single_photo(app_id, filename)
+    
+    if not success:
+        return redirect(request.referrer or url_for('get_active_applications'))
+
+    try:
+        file_service.delete_photos([filename])
+    except Exception as e:
+        print(f"Ошибка удаления файла {filename} с диска: {e}")
+        pass 
+    
+    return redirect(request.referrer or url_for('get_active_applications'))
+
+
+
 @app.route('/update_photo', methods=['POST'])
 def update_photo():
-    """API: Обновить фото (от бота)."""
+    """API: Обновить (добавить) фото (от бота)."""
     data = request.get_json()
     application_id = data.get('application_id')
     username = data.get('username')
