@@ -3,7 +3,6 @@
 <head>
     <meta charset="UTF-8">
     <title>{% if archive %}Архив заявок{% else %}Список заявок{% endif %}</title>
-    <meta http-equiv="refresh" content="25">
     <style>
     :root {
         --th-padding-y: 6px;
@@ -46,7 +45,6 @@
 
     .table-container {
       width: 100%;
-      max-height: 80vh;
       overflow: auto;
       margin: 20px auto 40px;
       border: 1px solid #ccc;
@@ -74,6 +72,7 @@
         padding-right: 8px;
         font-size: 0.95em;
         line-height: 1.1;
+        text-align: left;
     }
     td { 
         border: 1px solid #ccc; 
@@ -81,7 +80,6 @@
         text-align: left;
         font-size: 1em;
         overflow-wrap: break-word;
-        word-wrap: break-word; 
     }
 
     td.center-align {
@@ -93,13 +91,13 @@
     }
 
     .resize-handle {
-    position: absolute;
-    top: 0;
-    right: -5px;
-    width: 10px;
-    height: 100%;
-    cursor: col-resize;
-    z-index: 20;
+        position: absolute;
+        top: 0;
+        right: -5px;
+        width: 10px;
+        height: 100%;
+        cursor: col-resize;
+        z-index: 20;
     }   
 
     col.col-fio { width: 12%; }
@@ -115,7 +113,25 @@
     col.col-difficulty { width: 8%; }
     col.col-delete { width: 5%; }
 
-    img { max-width: 120px; max-height: 150px; border-radius: 4px; }
+    img { 
+        max-width: 120px; 
+        max-height: 150px; 
+        height: auto; 
+        border-radius: 4px; 
+        display: block; 
+    }
+
+    .photo-gallery {
+        display: flex;
+        gap: 5px; 
+        overflow-x: auto; 
+        padding-bottom: 5px; 
+    }
+
+    .photo-gallery a {
+        flex-shrink: 0; 
+    }
+
 
     #copied-popup {
         display:none; 
@@ -178,7 +194,7 @@
       color: #bbb;
       text-decoration: none;
     }
-    /* Стили для блока управления */
+    
     .th-height-control {
         margin: 10px 0 0 0;
         text-align: right;
@@ -189,12 +205,46 @@
     .th-height-control input[type="range"] {
         vertical-align: middle;
     }
+
+    .pagination {
+        text-align: center;
+        margin: -20px 0 40px 0;
+        font-size: 1.1em;
+    }
+    .pagination a, .pagination span {
+        display: inline-block;
+        padding: 8px 16px;
+        margin: 0 4px;
+        border-radius: 4px;
+        text-decoration: none;
+        color: #333;
+    }
+    .pagination a {
+        background-color: #fff;
+        border: 1px solid #ccc;
+        color: #2196F3;
+    }
+    .pagination a:hover {
+        background-color: #f0f8ff;
+    }
+    .pagination span {
+        background-color: #4CAF50;
+        color: white;
+        border: 1px solid #4CAF50;
+        font-weight: bold;
+    }
+    .pagination a.disabled {
+        color: #999;
+        background-color: #f5f5f5;
+        pointer-events: none;
+    }
+
     </style>
 </head>
 <body>
     <div class="nav-btns">
-        <a href="/applications" class="{% if not archive %}active{% endif %}">Активные заявки</a>
-        <a href="/archive" class="{% if archive %}active{% endif %}">Архив заявок</a>
+        <a href="{{ url_for('get_active_applications') }}" class="{% if not archive %}active{% endif %}">Активные заявки</a>
+        <a href="{{ url_for('get_archive') }}" class="{% if archive %}active{% endif %}">Архив заявок</a>
     </div>
     <h2>
         {% if archive %}Архив заявок{% else %}Список заявок{% endif %}
@@ -202,12 +252,11 @@
     {% if archive %}
     <div class="download-link">
         <a href="{{ url_for('export_archive') }}">
-            ⬇️ Скачать архив в Excel
+            ⬇️ Скачать архив в Excel (все заявки)
         </a>
     </div>
     {% endif %}
 
-    <!-- Блок управления высотой заголовка -->
     <div class="th-height-control">
         <label>
             Высота заголовка:&nbsp;
@@ -241,23 +290,23 @@
 
             <thead>
             <tr>
-                <th>ФИО</th>
-                <th>Пароль ЕМИАС</th>
-                <th>IP адрес</th>
-                <th>Отделение</th>
-                <th>Текст заявки</th>
-                <th>Фото</th>
-                <th>Telegram</th>
-                <th>Уникальный ID</th>
+                <th scope="col">ФИО</th>
+                <th scope="col">Пароль ЕМИАС</th>
+                <th scope="col">IP адрес</th>
+                <th scope="col">Отделение</th>
+                <th scope="col">Текст заявки</th>
+                <th scope="col">Фото</th>
+                <th scope="col">Telegram</th>
+                <th scope="col">Уникальный ID</th>
                 {% if archive %}
-                    <th>Дата поступления</th>
-                    <th>Дата архивации</th>
-                    <th>Исполнитель</th>
+                    <th scope="col">Дата поступления</th>
+                    <th scope="col">Дата архивации</th>
+                    <th scope="col">Исполнитель</th>
                 {% endif %}
-                <th>Статус</th>
-                <th>Сложность</th>
+                <th scope="col">Статус</th>
+                <th scope="col">Сложность</th>
                 {% if archive %}
-                    <th>Удалить</th>
+                    <th scope="col">Удалить</th>
                 {% endif %}
             </tr>
             </thead>
@@ -269,17 +318,25 @@
                 <td>{{ app.ip }}</td>
                 <td>{{ app.department }}</td>
                 <td>{{ app.details | replace('\n', '<br>') | safe }}</td>
+                
                 <td class="center-align">
                     {% if app.photo_urls %}
+                        <div class="photo-gallery">
                         {% for url in app.photo_urls %}
                             <a href="{{ url }}" class="photo-link">
-                                <img src="{{ url }}" alt="Фото">
+                                <img src="{{ url }}" 
+                                     alt="Фото к заявке {{ app.application_id }}" 
+                                     loading="lazy" 
+                                     width="120" 
+                                     height="150">
                             </a>
                         {% endfor %}
+                        </div>
                     {% else %}
                         Нет фото
                     {% endif %}
                 </td>
+
                 <td>
                     {% if app.username %}
                         <a href="https://t.me/{{ app.username }}" target="_blank">@{{ app.username }}</a>
@@ -334,6 +391,38 @@
             </tbody>
         </table>
     </div> 
+
+    {% if total_pages > 1 %}
+    <div class="pagination">
+        {% if current_page > 1 %}
+            <a href="?page=1">« Первая</a>
+        {% else %}
+            <a class="disabled">« Первая</a>
+        {% endif %}
+
+        {% if current_page > 1 %}
+            <a href="?page={{ current_page - 1 }}">‹ Предыдущая</a>
+        {% else %}
+            <a class="disabled">‹ Предыдущая</a>
+        {% endif %}
+
+        <span>Страница {{ current_page }} из {{ total_pages }}</span>
+
+        {% if current_page < total_pages %}
+            <a href="?page={{ current_page + 1 }}">Следующая ›</a>
+        {% else %}
+            <a class="disabled">Следующая ›</a>
+        {% endif %}
+
+        {% if current_page < total_pages %}
+            <a href="?page={{ total_pages }}">Последняя »</a>
+        {% else %}
+            <a class="disabled">Последняя »</a>
+        {% endif %}
+    </div>
+    {% endif %}
+
+
     <div id="copied-popup">
         Ваш id скопирован!
     </div>
@@ -343,25 +432,21 @@
       <img class="modal-content" id="img01">
     </div>
     <script>
-    // Управление высотой заголовка
     document.addEventListener('DOMContentLoaded', function() {
         var range = document.getElementById('thHeight');
         var value = document.getElementById('thHeightValue');
         var storageKey = 'tableThPaddingY';
 
-        // При загрузке страницы — восстановить значение из localStorage
         var saved = localStorage.getItem(storageKey);
         if (saved !== null) {
             range.value = saved;
             document.documentElement.style.setProperty('--th-padding-y', saved + 'px');
             value.textContent = saved;
         } else {
-            // Если нет сохранённого — взять текущее значение
             document.documentElement.style.setProperty('--th-padding-y', range.value + 'px');
             value.textContent = range.value;
         }
 
-        // При изменении — обновлять и сохранять
         range.addEventListener('input', function() {
             document.documentElement.style.setProperty('--th-padding-y', this.value + 'px');
             value.textContent = this.value;
@@ -396,22 +481,19 @@
     }
 
     (function() {
-        const container = document.getElementById('table-container');
-        if (!container) return;
-
-        const scrollKey = 'tableScrollTop';
+        const scrollKey = 'pageScrollTop';
 
         window.addEventListener('load', () => {
             const savedScrollTop = sessionStorage.getItem(scrollKey);
             if (savedScrollTop) {
-                container.scrollTop = parseInt(savedScrollTop, 10);
+                window.scrollTo(0, parseInt(savedScrollTop, 10));
                 sessionStorage.removeItem(scrollKey); 
             }
         });
 
         window.addEventListener('beforeunload', () => {
-            if (container.scrollTop > 0) {
-                 sessionStorage.setItem(scrollKey, container.scrollTop);
+            if (window.scrollY > 0) {
+                 sessionStorage.setItem(scrollKey, window.scrollY);
             }
         });
     })();
@@ -517,7 +599,6 @@
         });
         
         if (span) {
-            // Закрытие по клику на "X"
             span.onclick = closeModal;
         }
 

@@ -9,6 +9,7 @@ from flask import (
 )
 import pandas as pd
 from io import BytesIO
+from math import ceil
 
 DATABASE_FILE = 'applications.db'
 UPLOAD_FOLDER_NAME = 'uploads'
@@ -18,6 +19,8 @@ UPLOAD_FOLDER_PATH = os.path.join(BASE_DIR, UPLOAD_FOLDER_NAME)
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER_PATH
 app.config['DATABASE'] = DATABASE_FILE
+
+PER_PAGE = 10
 
 
 class FileService:
@@ -120,10 +123,28 @@ def repo_set_difficulty(application_id: int, difficulty: str):
     db.execute("UPDATE applications SET difficulty=? WHERE id=?", (difficulty, application_id))
     db.commit()
 
-def repo_get_applications_by_status(status: str) -> list:
-    """Получает список заявок по статусу и обогащает URL-ами фото."""
+
+def repo_get_applications_paginated(status: str, page: int, per_page: int):
+    """
+    Получает список заявок по статусу (с пагинацией) и обогащает URL-ами фото.
+    Возвращает (список заявок, общее кол-во страниц).
+    """
     db = get_db()
-    cur = db.execute("SELECT * FROM applications WHERE status = ?", (status,))
+    
+    cur_count = db.execute("SELECT COUNT(id) FROM applications WHERE status = ?", (status,))
+    total_items = cur_count.fetchone()[0]
+    
+    if total_items == 0:
+        return [], 1
+        
+    total_pages = ceil(total_items / per_page)
+    
+    offset = (page - 1) * per_page
+    
+    order_by = "archived_at DESC" if status == 'done' else "created_at DESC"
+    
+    query = f"SELECT * FROM applications WHERE status = ? ORDER BY {order_by} LIMIT ? OFFSET ?"
+    cur = db.execute(query, (status, per_page, offset))
     rows = cur.fetchall()
     
     applications = []
@@ -136,7 +157,10 @@ def repo_get_applications_by_status(status: str) -> list:
         
         app_data['photo_urls'] = [url_for('uploaded_file', filename=p) for p in photo_paths]
         applications.append(app_data)
-    return applications
+        
+    return applications, total_pages
+
+
 
 def repo_get_raw_apps_for_export() -> list:
     """Получает "сырые" данные выполненных заявок для экспорта в Excel."""
@@ -167,7 +191,6 @@ def repo_update_photo(application_id: str, username: str, new_filename: str) -> 
     Проверяет владельца. Возвращает True при успехе.
     """
     db = get_db()
-    
     cur = db.execute(
         "SELECT id, photos FROM applications WHERE application_id=? AND lower(username)=lower(?)", 
         (application_id, username)
@@ -181,7 +204,7 @@ def repo_update_photo(application_id: str, username: str, new_filename: str) -> 
         current_photos = json.loads(row['photos'] or '[]')
     except (json.JSONDecodeError, TypeError):
         current_photos = []
-
+        
     if new_filename not in current_photos:
         current_photos.append(new_filename)
     
@@ -279,15 +302,48 @@ def set_difficulty(application_id):
 
 @app.route('/applications')
 def get_active_applications():
-    """WEB: Показать страницу с активными заявками."""
-    applications = repo_get_applications_by_status('active')
-    return render_template('applications.html', applications=applications, archive=False)
+    """WEB: Показать страницу с активными заявками (с пагинацией)."""
+    
+    page = request.args.get('page', 1, type=int)
+    if page < 1:
+        page = 1
+        
+    applications, total_pages = repo_get_applications_paginated('active', page, PER_PAGE)
+    
+    if page > total_pages and total_pages > 0:
+        page = total_pages
+        applications, total_pages = repo_get_applications_paginated('active', page, PER_PAGE)
+
+    return render_template(
+        'applications.html', 
+        applications=applications, 
+        archive=False,
+        current_page=page,
+        total_pages=total_pages
+    )
 
 @app.route('/archive')
 def get_archive():
-    """WEB: Показать страницу с архивом заявок."""
-    applications = repo_get_applications_by_status('done')
-    return render_template('applications.html', applications=applications, archive=True)
+    """WEB: Показать страницу с архивом заявок (с пагинацией)."""
+    
+    page = request.args.get('page', 1, type=int)
+    if page < 1:
+        page = 1
+    
+    applications, total_pages = repo_get_applications_paginated('done', page, PER_PAGE)
+    
+    if page > total_pages and total_pages > 0:
+        page = total_pages
+        applications, total_pages = repo_get_applications_paginated('done', page, PER_PAGE)
+
+    return render_template(
+        'applications.html', 
+        applications=applications, 
+        archive=True,
+        current_page=page,
+        total_pages=total_pages
+    )
+
 
 @app.route('/export_archive')
 def export_archive():
