@@ -101,34 +101,31 @@
         z-index: 20;
     }   
 
-    {% if archive %}
-        col.col-fio { width: 12%; }
-        col.col-ip { width: 8%; }
-        col.col-department { width: 12%; }
-        col.col-details { width: 15%; }
-        col.col-photo { width: 8%; }
-        col.col-telegram { width: 5%; }
-        col.col-uid { width: 8%; }
-        col.col-date-created { width: 8%; }
-        col.col-date-archived { width: 8%; }
-        col.col-executor { width: 8%; }
-        col.col-status { width: 3%; }
-        col.col-difficulty { width: 0%; }
-        col.col-delete { width: 5%; }
-    {% else %}
-        col.col-fio { width: 15%; }
-        col.col-ip { width: 10%; }
-        col.col-department { width: 15%; }
-        col.col-details { width: 20%; }
-        col.col-photo { width: 10%; }
-        col.col-telegram { width: 5%; }
-        col.col-uid { width: 8%; }
-        col.col-date-created { width: 9%; }
-        col.col-status { width: 4%; }
-        col.col-difficulty { width: 4%; }
-    {% endif %}
+    .view-archive col.col-fio { width: 12%; }
+    .view-archive col.col-ip { width: 8%; }
+    .view-archive col.col-department { width: 12%; }
+    .view-archive col.col-details { width: 15%; }
+    .view-archive col.col-photo { width: 8%; }
+    .view-archive col.col-telegram { width: 5%; }
+    .view-archive col.col-uid { width: 8%; }
+    .view-archive col.col-date-created { width: 8%; }
+    .view-archive col.col-date-archived { width: 8%; }
+    .view-archive col.col-executor { width: 8%; }
+    .view-archive col.col-status { width: 3%; }
+    .view-archive col.col-difficulty { width: 0%; }
+    .view-archive col.col-delete { width: 5%; }
 
-
+    .view-active col.col-fio { width: 15%; }
+    .view-active col.col-ip { width: 10%; }
+    .view-active col.col-department { width: 15%; }
+    .view-active col.col-details { width: 20%; }
+    .view-active col.col-photo { width: 10%; }
+    .view-active col.col-telegram { width: 5%; }
+    .view-active col.col-uid { width: 8%; }
+    .view-active col.col-date-created { width: 9%; }
+    .view-active col.col-status { width: 4%; }
+    .view-active col.col-difficulty { width: 4%; }
+    
     img { 
         max-width: 120px; 
         max-height: 150px; 
@@ -280,7 +277,7 @@
 
     </style>
 </head>
-<body>
+<body class="{% if archive %}view-archive{% else %}view-active{% endif %}">
     <div class="nav-btns">
         <a href="{{ url_for('get_active_applications') }}" class="{% if not archive %}active{% endif %}">Активные заявки</a>
         <a href="{{ url_for('get_archive') }}" class="{% if archive %}active{% endif %}">Архив заявок</a>
@@ -373,7 +370,7 @@
                                       action="{{ url_for('delete_photo', app_id=app.id, filename=photo.filename) }}" 
                                       onsubmit="return confirm('Удалить это фото?');"
                                       title="Удалить фото">
-                                    <button type="submit" class="delete-photo-btn">✖</button>
+                                    <button type-"submit" class="delete-photo-btn">✖</button>
                                 </form>
                                 {% endif %}
                             </div>
