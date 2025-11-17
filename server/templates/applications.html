@@ -101,18 +101,33 @@
         z-index: 20;
     }   
 
-    col.col-fio { width: 12%; }
-    col.col-emiac { width: 8%; }
-    col.col-ip { width: 8%; }
-    col.col-department { width: 12%; }
-    col.col-details { width: 20%; }
-    col.col-photo { width: 10%; }
-    col.col-telegram { width: 4%; }
-    col.col-uid { width: 8%; }
-    col.col-dates { width: 9%; }
-    col.col-status { width: 8%; }
-    col.col-difficulty { width: 8%; }
-    col.col-delete { width: 5%; }
+    {% if archive %}
+        col.col-fio { width: 12%; }
+        col.col-ip { width: 8%; }
+        col.col-department { width: 12%; }
+        col.col-details { width: 15%; }
+        col.col-photo { width: 8%; }
+        col.col-telegram { width: 5%; }
+        col.col-uid { width: 8%; }
+        col.col-date-created { width: 8%; }
+        col.col-date-archived { width: 8%; }
+        col.col-executor { width: 8%; }
+        col.col-status { width: 3%; }
+        col.col-difficulty { width: 0%; }
+        col.col-delete { width: 5%; }
+    {% else %}
+        col.col-fio { width: 15%; }
+        col.col-ip { width: 10%; }
+        col.col-department { width: 15%; }
+        col.col-details { width: 20%; }
+        col.col-photo { width: 10%; }
+        col.col-telegram { width: 5%; }
+        col.col-uid { width: 8%; }
+        col.col-date-created { width: 9%; }
+        col.col-status { width: 4%; }
+        col.col-difficulty { width: 4%; }
+    {% endif %}
+
 
     img { 
         max-width: 120px; 
@@ -293,17 +308,16 @@
         <table>
             <colgroup>
                 <col class="col-fio">
-                <col class="col-emiac">
                 <col class="col-ip">
                 <col class="col-department">
                 <col class="col-details">
                 <col class="col-photo">
                 <col class="col-telegram">
                 <col class="col-uid">
+                <col class="col-date-created">
                 {% if archive %}
-                    <col class="col-dates">
-                    <col class="col-dates">
-                    <col class="col-fio">
+                    <col class="col-date-archived">
+                    <col class="col-executor">
                 {% endif %}
                 <col class="col-status">
                 <col class="col-difficulty">
@@ -315,15 +329,14 @@
             <thead>
             <tr>
                 <th scope="col">ФИО</th>
-                <th scope="col">Пароль ЕМИАС</th>
                 <th scope="col">IP адрес</th>
                 <th scope="col">Отделение</th>
                 <th scope="col">Текст заявки</th>
                 <th scope="col">Фото</th>
                 <th scope="col">Telegram</th>
                 <th scope="col">Уникальный ID</th>
+                <th scope="col">Дата поступления</th>
                 {% if archive %}
-                    <th scope="col">Дата поступления</th>
                     <th scope="col">Дата архивации</th>
                     <th scope="col">Исполнитель</th>
                 {% endif %}
@@ -338,7 +351,6 @@
             {% for app in applications %}
             <tr>
                 <td>{{ app.name }}</td>
-                <td>{{ app.emiac }}</td>
                 <td>{{ app.ip }}</td>
                 <td>{{ app.department }}</td>
                 <td>{{ app.details | replace('\n', '<br>') | safe }}</td>
@@ -384,11 +396,25 @@
                         {{ app.application_id }}
                     </span>
                 </td>
+                
+                <td>
+                    {% if app.created_at %}
+                        {{ app.created_at.strftime('%d-%m-%Y %H:%M') }}
+                    {% else %}
+                        —
+                    {% endif %}
+                </td>
                 {% if archive %}
-                    <td>{{ app.created_at or '—' }}</td>
-                    <td>{{ app.archived_at or '—' }}</td>
+                    <td>
+                        {% if app.archived_at %}
+                            {{ app.archived_at.strftime('%d-%m-%Y %H:%M') }}
+                        {% else %}
+                            —
+                        {% endif %}
+                    </td>
                     <td>{{ app.done_by or '—' }}</td>
                 {% endif %}
+
                 <td>
                     {% if not archive %}
                         <span style="color: grey;">В работе</span>
@@ -407,9 +433,7 @@
                             </select>
                         </form>
                     {% else %}
-                        <span>
-                            {% if app.difficulty == 'low' %}Низкий{% elif app.difficulty == 'medium' %}Средний{% elif app.difficulty == 'high' %}Высокий{% else %}—{% endif %}
-                        </span>
+                        <span style="color: #888;">—</span>
                     {% endif %}
                 </td>
                 {% if archive %}

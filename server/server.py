@@ -2,7 +2,7 @@ import os
 import base64
 import sqlite3
 import json
-from datetime import datetime
+from datetime import datetime 
 from flask import (
     Flask, request, jsonify, send_from_directory, 
     render_template, redirect, url_for, send_file, g
@@ -74,7 +74,6 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         application_id TEXT UNIQUE,
         chat_id TEXT,
-        emiac TEXT,
         ip TEXT,
         name TEXT,
         department TEXT,
@@ -95,12 +94,12 @@ def repo_create_application(data: dict):
     db = get_db()
     db.execute(
         """INSERT INTO applications 
-           (name, department, details, username, photos, application_id, chat_id, status, ip, emiac, created_at, difficulty) 
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           (name, department, details, username, photos, application_id, chat_id, status, ip, created_at, difficulty) 
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             data.get('name'), data.get('department'), data.get('details'), data.get('username'),
             data.get('photos_json'), data.get('application_id'), data.get('chat_id'),
-            data.get('status'), data.get('ip'), data.get('emiac'),
+            data.get('status'), data.get('ip'), 
             data.get('created_at'), data.get('difficulty')
         )
     )
@@ -157,6 +156,18 @@ def repo_get_applications_paginated(status: str, page: int, per_page: int):
             for p in photo_paths
         ]
 
+        try:
+            if app_data['created_at']:
+                app_data['created_at'] = datetime.strptime(app_data['created_at'], '%Y-%m-%d %H:%M')
+        except (ValueError, TypeError):
+            app_data['created_at'] = None
+
+        try:
+            if app_data.get('archived_at'):
+                app_data['archived_at'] = datetime.strptime(app_data['archived_at'], '%Y-%m-%d %H:%M')
+        except (ValueError, TypeError):
+            app_data['archived_at'] = None
+
         applications.append(app_data)
         
     return applications, total_pages
@@ -188,20 +199,19 @@ def repo_delete_application(application_id: int) -> list:
 def repo_delete_single_photo(app_id: int, filename_to_delete: str) -> bool:
     """
     Удаляет ОДНО фото из списка фотографий заявки.
-    Возвращает True, если файл был найден и удален из БД.
     """
     db = get_db()
     
     cur = db.execute("SELECT photos FROM applications WHERE id = ?", (app_id,))
     row = cur.fetchone()
     if not row:
-        return False
+        return False 
     
     try:
         current_photos = json.loads(row['photos'] or '[]')
     except (json.JSONDecodeError, TypeError):
         current_photos = []
-
+    
     if filename_to_delete not in current_photos:
         return False
         
@@ -212,40 +222,38 @@ def repo_delete_single_photo(app_id: int, filename_to_delete: str) -> bool:
     db.commit()
     return True
 
-
-def repo_update_photo(application_id: str, username: str, new_filename: str) -> bool:
+def repo_append_photos(application_id: str, username: str, new_filenames_list: list) -> bool:
     """
-    Обновляет фото для заявки, ДОБАВЛЯЯ новое фото к списку.
-    Проверяет владельца. Возвращает True при успехе.
+    АТОМАРНО ДОБАВЛЯЕТ СПИСОК новых фото.
+    Использует транзакцию и json_insert для предотвращения race condition.
     """
     db = get_db()
-    
-    cur = db.execute(
-        "SELECT id, photos FROM applications WHERE application_id=? AND lower(username)=lower(?)", 
-        (application_id, username)
-    )
-    row = cur.fetchone()
-    
-    if not row:
-        return False
-    
     try:
-        current_photos = json.loads(row['photos'] or '[]')
-    except (json.JSONDecodeError, TypeError):
-        current_photos = []
+        with db: 
+            cur_check = db.execute(
+                "SELECT id FROM applications WHERE application_id=? AND lower(username)=lower(?)",
+                (application_id, username)
+            )
+            if not cur_check.fetchone():
+                return False
+            for filename in new_filenames_list:
+                db.execute(
+                    """
+                    UPDATE applications
+                    SET photos = json_insert(COALESCE(photos, '[]'), '$[#]', ?)
+                    WHERE application_id = ?
+                    """,
+                    (filename, application_id)
+                )
+        return True
         
-    if new_filename not in current_photos:
-        current_photos.append(new_filename)
-    
-    new_photos_json = json.dumps(current_photos)
-    
-    db.execute("UPDATE applications SET photos=? WHERE application_id=?", 
-               (new_photos_json, application_id))
-    db.commit()
-    return True
+    except sqlite3.Error as e:
+        print(f"Ошибка при batch-обновлении json: {e}")
+        return False
+
 
 def repo_append_details(application_id: str, username: str, extra_text: str) -> bool:
-    """Дополняет текст заявки, проверяя владельца. Возвращает True при успехе."""
+    """Дополняет текст заявки, проверяя владельца."""
     db = get_db()
     cur = db.execute(
         "SELECT details FROM applications WHERE application_id=? AND lower(username)=lower(?)", 
@@ -264,9 +272,27 @@ def repo_append_details(application_id: str, username: str, extra_text: str) -> 
     db.commit()
     return True
 
+@app.route('/api/get_user_info_for_app/<app_id>', methods=['GET'])
+def api_get_user_info_for_app(app_id):
+    db = get_db()
+    cur = db.execute("SELECT chat_id, name FROM applications WHERE application_id = ?", (app_id,))
+    row = cur.fetchone()
+    if row:
+        return jsonify(dict(row)), 200
+    else:
+        return jsonify({'error': 'Not found'}), 404
+
+@app.route('/api/get_app_ids_for_user/<chat_id>', methods=['GET'])
+def api_get_app_ids_for_user(chat_id):
+    db = get_db()
+    cur = db.execute("SELECT application_id FROM applications WHERE chat_id = ?", (chat_id,))
+    rows = cur.fetchall()
+    app_ids = [row['application_id'] for row in rows]
+    return jsonify(app_ids), 200
+
+
 @app.route('/', methods=['GET'])
 def home():
-    """Главная страница (веб-интерфейса)."""
     return render_template('index.html')
 
 @app.route('/applications', methods=['POST'])
@@ -285,11 +311,9 @@ def add_application():
         if saved_name:
             photo_paths.append(saved_name)
 
-
     db_data = {
         'name': data.get('name', '').title(),
         'ip': data.get('ip'),
-        'emiac': data.get('emiac'),
         'department': data.get('department'),
         'details': data.get('details'),
         'application_id': application_id,
@@ -321,7 +345,6 @@ def restore_application(application_id):
 
 @app.route('/set_difficulty/<int:application_id>', methods=['POST'])
 def set_difficulty(application_id):
-    """WEB: Установить сложность (из веб-интерфейса)."""
     new_difficulty = request.form.get('difficulty')
     if new_difficulty not in ['low', 'medium', 'high']:
         return "Некорректное значение сложности", 400
@@ -332,7 +355,6 @@ def set_difficulty(application_id):
 @app.route('/applications')
 def get_active_applications():
     """WEB: Показать страницу с активными заявками (с пагинацией)."""
-    
     page = request.args.get('page', 1, type=int)
     if page < 1:
         page = 1
@@ -354,7 +376,6 @@ def get_active_applications():
 @app.route('/archive')
 def get_archive():
     """WEB: Показать страницу с архивом заявок (с пагинацией)."""
-    
     page = request.args.get('page', 1, type=int)
     if page < 1:
         page = 1
@@ -407,15 +428,12 @@ def export_archive():
 def delete_application(application_id):
     """WEB: Удалить заявку (из архива)."""
     filenames_to_delete = repo_delete_application(application_id)
-    
     file_service.delete_photos(filenames_to_delete)
-    
     return redirect(request.referrer or url_for('get_archive'))
 
 @app.route('/delete_photo/<int:app_id>/<path:filename>', methods=['POST'])
 def delete_photo(app_id, filename):
     """WEB: Удаляет одно фото из заявки."""
-    
     success = repo_delete_single_photo(app_id, filename)
     
     if not success:
@@ -429,32 +447,35 @@ def delete_photo(app_id, filename):
     
     return redirect(request.referrer or url_for('get_active_applications'))
 
-
-
-@app.route('/update_photo', methods=['POST'])
-def update_photo():
-    """API: Обновить (добавить) фото (от бота)."""
+@app.route('/update_photos', methods=['POST'])
+def update_photos():
+    """API: Обновить (добавить) НЕСКОЛЬКО фото (от бота)."""
     data = request.get_json()
     application_id = data.get('application_id')
     username = data.get('username')
-    photo_b64 = data.get('photo')
+    photos_b64_list = data.get('photos', [])
     
-    if not all([application_id, username, photo_b64]):
+    if not all([application_id, username, photos_b64_list]):
         return jsonify({'error': 'Missing required fields'}), 400
     
-    filename = f"{application_id}_updated_{int(datetime.now().timestamp())}.jpg"
-    
-    saved_name = file_service.save_photo_from_b64(photo_b64, filename)
-    if not saved_name:
-         return jsonify({'error': 'Failed to save photo'}), 500
+    saved_names_list = []
+    for idx, photo_b64 in enumerate(photos_b64_list):
+        filename = f"{application_id}_updated_{int(datetime.now().timestamp())}_{idx}.jpg"
+        saved_name = file_service.save_photo_from_b64(photo_b64, filename)
+        
+        if not saved_name:
+            file_service.delete_photos(saved_names_list) 
+            return jsonify({'error': 'Failed to save photo'}), 500
+        saved_names_list.append(saved_name)
 
-    success = repo_update_photo(application_id, username, saved_name)
+    success = repo_append_photos(application_id, username, saved_names_list)
     
     if not success:
-        file_service.delete_photos([saved_name])
+        file_service.delete_photos(saved_names_list)
         return jsonify({'error': 'Заявка не найдена или не принадлежит вам'}), 404
         
-    return jsonify({'message': 'Фото обновлено'}), 200
+    return jsonify({'message': 'Фото обновлены'}), 200
+
 
 @app.route('/append_details', methods=['POST'])
 def append_details():
