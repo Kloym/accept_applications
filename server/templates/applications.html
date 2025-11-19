@@ -22,13 +22,13 @@
         display: inline-block;
         margin: 0 10px;
         padding: 10px 24px;
-        background: #4CAF50;
-        color: #fff;
+        background: #ddd;
+        color: #333;
         text-decoration: none;
         border-radius: 5px;
         font-weight: bold;
     }
-    .nav-btns a.active { background: #357a38; }
+    .nav-btns a.active { background: #4CAF50; color: #fff; }
 
     .download-link {
         text-align:center; 
@@ -100,31 +100,35 @@
         cursor: col-resize;
         z-index: 20;
     }   
-
+    
+    /* В архиве заметок нет, отдаем место деталям */
     .view-archive col.col-fio { width: 12%; }
     .view-archive col.col-ip { width: 8%; }
     .view-archive col.col-department { width: 12%; }
-    .view-archive col.col-details { width: 15%; }
+    .view-archive col.col-details { width: 16%; } /* Увеличили, так как убрали заметки */
     .view-archive col.col-photo { width: 8%; }
+    /* .view-archive col.col-notes { width: 4%; }  <-- Скрыто в архиве */
     .view-archive col.col-telegram { width: 5%; }
     .view-archive col.col-uid { width: 8%; }
-    .view-archive col.col-date-created { width: 8%; }
-    .view-archive col.col-date-archived { width: 8%; }
-    .view-archive col.col-executor { width: 8%; }
+    .view-archive col.col-date-created { width: 7%; }
+    .view-archive col.col-date-archived { width: 7%; }
+    .view-archive col.col-executor { width: 7%; }
     .view-archive col.col-status { width: 3%; }
-    .view-archive col.col-difficulty { width: 0%; }
-    .view-archive col.col-delete { width: 5%; }
+    .view-archive col.col-difficulty { width: 4%; }
+    .view-archive col.col-solution { width: 10%; }
+    .view-archive col.col-delete { width: 3%; }
 
-    .view-active col.col-fio { width: 15%; }
-    .view-active col.col-ip { width: 10%; }
-    .view-active col.col-department { width: 15%; }
-    .view-active col.col-details { width: 20%; }
-    .view-active col.col-photo { width: 10%; }
+    .view-active col.col-fio { width: 14%; }
+    .view-active col.col-ip { width: 9%; }
+    .view-active col.col-department { width: 14%; }
+    .view-active col.col-details { width: 18%; }
+    .view-active col.col-photo { width: 9%; } 
+    .view-active col.col-notes { width: 4%; } 
     .view-active col.col-telegram { width: 5%; }
     .view-active col.col-uid { width: 8%; }
     .view-active col.col-date-created { width: 9%; }
-    .view-active col.col-status { width: 4%; }
-    .view-active col.col-difficulty { width: 4%; }
+    .view-active col.col-status { width: 5%; }
+    .view-active col.col-difficulty { width: 5%; }
     
     img { 
         max-width: 120px; 
@@ -168,6 +172,58 @@
         opacity: 1;
     }
 
+    .note-btn {
+        background: none;
+        border: none;
+        font-size: 1.5em;
+        cursor: pointer;
+        transition: transform 0.2s;
+    }
+    .note-btn:hover { transform: scale(1.2); }
+    .note-exists { filter: drop-shadow(0 0 2px gold); opacity: 1;}
+    .note-empty { opacity: 0.3; filter: grayscale(100%); }
+
+    #noteModal {
+        display: none;
+        position: fixed;
+        z-index: 2000;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0,0,0,0.5);
+    }
+    #noteModal .modal-content {
+        background-color: #fefefe;
+        margin: 10% auto;
+        padding: 20px;
+        border: 1px solid #888;
+        width: 50%;
+        border-radius: 8px;
+    }
+    #noteModal textarea {
+        width: 100%;
+        height: 200px;
+        margin: 10px 0;
+        padding: 10px;
+        font-family: sans-serif;
+        font-size: 1em;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        resize: vertical;
+    }
+    #noteModal button.save-btn {
+        background-color: #4CAF50;
+        color: white;
+        padding: 10px 20px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 1em;
+        float: right;
+    }
+    #noteModal button.save-btn:hover { background-color: #45a049; }
+
 
     #copied-popup {
         display:none; 
@@ -194,12 +250,11 @@
       width: 100%;
       height: 100%;
       overflow: auto;
-      background-color: rgb(0,0,0);
       background-color: rgba(0,0,0,0.9);
       cursor: zoom-out;
     }
 
-    .modal-content {
+    .modal-content-img {
       margin: auto;
       display: block;
       max-width: 90%;
@@ -215,21 +270,13 @@
     }
 
     .close {
-      position: absolute;
-      top: 15px;
-      right: 35px;
       color: #f1f1f1;
-      font-size: 40px;
+      float: right;
+      font-size: 28px;
       font-weight: bold;
-      transition: 0.3s;
       cursor: pointer;
     }
-
-    .close:hover,
-    .close:focus {
-      color: #bbb;
-      text-decoration: none;
-    }
+    .close:hover { color: #bbb; }
     
     .th-height-control {
         margin: 10px 0 0 0;
@@ -274,12 +321,12 @@
         background-color: #f5f5f5;
         pointer-events: none;
     }
-
     </style>
 </head>
 <body class="{% if archive %}view-archive{% else %}view-active{% endif %}">
     <div class="nav-btns">
         <a href="{{ url_for('get_active_applications') }}" class="{% if not archive %}active{% endif %}">Активные заявки</a>
+        <a href="{{ url_for('comments_view') }}">Лента сообщений</a>
         <a href="{{ url_for('get_archive') }}" class="{% if archive %}active{% endif %}">Архив заявок</a>
     </div>
     <h2>
@@ -308,7 +355,13 @@
                 <col class="col-ip">
                 <col class="col-department">
                 <col class="col-details">
+                
                 <col class="col-photo">
+
+                {% if not archive %}
+                    <col class="col-notes">
+                {% endif %}
+                
                 <col class="col-telegram">
                 <col class="col-uid">
                 <col class="col-date-created">
@@ -319,6 +372,7 @@
                 <col class="col-status">
                 <col class="col-difficulty">
                 {% if archive %}
+                    <col class="col-solution">
                     <col class="col-delete">
                 {% endif %}
             </colgroup>
@@ -329,7 +383,13 @@
                 <th scope="col">IP адрес</th>
                 <th scope="col">Отделение</th>
                 <th scope="col">Текст заявки</th>
+                
                 <th scope="col">Фото</th>
+
+                {% if not archive %}
+                    <th scope="col">Заметки</th>
+                {% endif %}
+                
                 <th scope="col">Telegram</th>
                 <th scope="col">Уникальный ID</th>
                 <th scope="col">Дата поступления</th>
@@ -340,6 +400,7 @@
                 <th scope="col">Статус</th>
                 <th scope="col">Сложность</th>
                 {% if archive %}
+                    <th scope="col">Решение (Сообщение)</th>
                     <th scope="col">Удалить</th>
                 {% endif %}
             </tr>
@@ -370,7 +431,7 @@
                                       action="{{ url_for('delete_photo', app_id=app.id, filename=photo.filename) }}" 
                                       onsubmit="return confirm('Удалить это фото?');"
                                       title="Удалить фото">
-                                    <button type-"submit" class="delete-photo-btn">✖</button>
+                                    <button type="submit" class="delete-photo-btn">✖</button>
                                 </form>
                                 {% endif %}
                             </div>
@@ -380,6 +441,17 @@
                         Нет фото
                     {% endif %}
                 </td>
+                
+                {% if not archive %}
+                <td class="center-align">
+                    <button type="button" 
+                            class="note-btn {% if app.staff_notes %}note-exists{% else %}note-empty{% endif %}"
+                            onclick="openNoteModal('{{ app.id }}', `{{ app.staff_notes or '' }}`)"
+                            title="{% if app.staff_notes %}Есть заметка{% else %}Добавить заметку{% endif %}">
+                        📝
+                    </button>
+                </td>
+                {% endif %}
 
                 <td>
                     {% if app.username %}
@@ -419,28 +491,48 @@
                         <span style="color: green;">Выполнено</span>
                     {% endif %}
                 </td>
+                
                 <td class="center-align">
                     {% if not archive %}
                         <form method="post" action="/set_difficulty/{{ app.id }}">
                             <select name="difficulty" onchange="this.form.submit()"
-                                title="{% if app.difficulty == 'low' %}Среднее время: 1 день{% elif app.difficulty == 'medium' %}Среднее время: 3-5 дней{% elif app.difficulty == 'high' %}Среднее время: 7 и более дней{% else %}—{% endif %}">
+                                title="{% if app.difficulty == 'low' %}Среднее время: 1 день{% elif app.difficulty == 'medium' %}Среднее время: 3-5 дней{% elif app.difficulty == 'high' %}Среднее время: 7 и более дней{% elif app.difficulty == 'naumen' %}Статус: Наумен{% else %}—{% endif %}">
                                 <option value="low" {% if app.difficulty == 'low' %}selected{% endif %} title="Среднее время: 1 день">Низкий</option>
                                 <option value="medium" {% if app.difficulty == 'medium' %}selected{% endif %} title="Среднее время: 3-5 дней">Средний</option>
                                 <option value="high" {% if app.difficulty == 'high' %}selected{% endif %} title="Среднее время: 7 и более дней">Высокий</option>
+                                <option value="naumen" {% if app.difficulty == 'naumen' %}selected{% endif %} title="Время неизвестно">Наумен</option>
                             </select>
                         </form>
                     {% else %}
-                        <span style="color: #888;">—</span>
+                        {% if app.difficulty == 'low' %}
+                            Низкий
+                        {% elif app.difficulty == 'medium' %}
+                            Средний
+                        {% elif app.difficulty == 'high' %}
+                            Высокий
+                        {% elif app.difficulty == 'naumen' %}
+                            Наумен
+                        {% else %}
+                            <span style="color: #888;">—</span>
+                        {% endif %}
                     {% endif %}
                 </td>
+
                 {% if archive %}
-                <td class="center-align">
-                    <form method="post" action="/delete/{{ app.id }}" style="display:inline;" onsubmit="return confirm('Вы уверены, что хотите удалить эту заявку? Это действие необратимо!');">
-                        <button type="submit" style="background:#e74c3c;color:#fff;border:none;padding:4px 10px;border-radius:5px;cursor:pointer;font-size:0.9em;">
-                            ✖
-                        </button>
-                    </form>
-                </td>
+                    <td>
+                        {% if app.solution %}
+                            <div style="max-height: 100px; overflow-y: auto; white-space: pre-wrap; font-size: 0.9em;">{{ app.solution }}</div>
+                        {% else %}
+                            <span style="color: #ccc;">Нет данных</span>
+                        {% endif %}
+                    </td>
+                    <td class="center-align">
+                        <form method="post" action="/delete/{{ app.id }}" style="display:inline;" onsubmit="return confirm('Вы уверены, что хотите удалить эту заявку? Это действие необратимо!');">
+                            <button type="submit" style="background:#e74c3c;color:#fff;border:none;padding:4px 10px;border-radius:5px;cursor:pointer;font-size:0.9em;">
+                                ✖
+                            </button>
+                        </form>
+                    </td>
                 {% endif %}
             </tr>
             {% endfor %}
@@ -484,8 +576,23 @@
 
     <div id="myModal" class="modal">
       <span class="close">&times;</span>
-      <img class="modal-content" id="img01">
+      <img class="modal-content-img" id="img01">
     </div>
+
+    <div id="noteModal">
+        <div class="modal-content">
+            <span class="close" onclick="closeNoteModal()">&times;</span>
+            <h3>Внутренняя заметка</h3>
+            <p style="color: #666; font-size: 0.9em;">Видна только сотрудникам</p>
+            <form id="noteForm" method="POST" action="">
+                <textarea name="staff_notes" id="modalNoteText" placeholder="Напишите что-нибудь..."></textarea>
+                <div style="overflow: hidden;">
+                    <button type="submit" class="save-btn">Сохранить</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <script>
     document.addEventListener('DOMContentLoaded', function() {
         var range = document.getElementById('thHeight');
@@ -631,46 +738,55 @@
         });
     })();
 
+    var imgModal = document.getElementById("myModal");
+    var modalImg = document.getElementById("img01");
+    
+    var noteModal = document.getElementById("noteModal");
+    var noteForm = document.getElementById("noteForm");
+    var noteText = document.getElementById("modalNoteText");
 
-    (function() {
-        var modal = document.getElementById("myModal");
-        if (!modal) return;
-
-        var modalImg = document.getElementById("img01");
-        var span = document.getElementsByClassName("close")[0];
-
-        function closeModal() {
-          if(modal) modal.style.display = "none";
+    var spans = document.getElementsByClassName("close");
+    for (var i = 0; i < spans.length; i++) {
+        spans[i].onclick = function() {
+            imgModal.style.display = "none";
+            noteModal.style.display = "none";
         }
+    }
 
-        var tableContainer = document.getElementById("table-container");
-        if (tableContainer) {
-            tableContainer.addEventListener('click', function(e) {
-                var link = e.target.closest('.photo-link');
-                if (link) {
-                    e.preventDefault();
-                    modal.style.display = "block";
-                    modalImg.src = link.href;
-                }
-            });
-        }
-        
-        if (span) {
-            span.onclick = closeModal;
-        }
-
-        modal.onclick = function(e) {
-          if (e.target === modal) { 
-            closeModal();
-          }
-        }
-
-        document.addEventListener('keydown', function(e) {
-          if (e.key === "Escape" || e.key === "Esc") {
-            closeModal();
-          }
+    var tableContainer = document.getElementById("table-container");
+    if (tableContainer) {
+        tableContainer.addEventListener('click', function(e) {
+            var link = e.target.closest('.photo-link');
+            if (link) {
+                e.preventDefault();
+                imgModal.style.display = "block";
+                modalImg.src = link.href;
+            }
         });
-    })();
+    }
+
+    function openNoteModal(appId, currentText) {
+        noteForm.action = "/update_notes/" + appId;
+        noteText.value = currentText;
+        noteModal.style.display = "block";
+        noteText.focus();
+    }
+
+    function closeNoteModal() {
+        noteModal.style.display = "none";
+    }
+
+    window.onclick = function(e) {
+        if (e.target === imgModal) imgModal.style.display = "none";
+        if (e.target === noteModal) noteModal.style.display = "none";
+    }
+
+    document.addEventListener('keydown', function(e) {
+        if (e.key === "Escape" || e.key === "Esc") {
+            imgModal.style.display = "none";
+            noteModal.style.display = "none";
+        }
+    });
 
     </script>
 </body>
