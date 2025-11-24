@@ -339,25 +339,44 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def finish_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args
     if not args or len(args[0]) != 8:
-        await update.message.reply_text("Укажите id заявки, например: /q 1234abcd")
+        await update.message.reply_text("Укажите id заявки, например: /q 1234abcd [текст сообщения]")
         return
+    
     app_id = args[0]
+    additional_text = " ".join(args[1:]) if len(args) > 1 else None
+
     username = update.effective_user.username
     done_by = USERNAME_TO_FIO.get(username, username)
+    
     result = await asyncio.to_thread(db_service.mark_application_done, app_id, done_by)
+    
     if not result:
         await update.message.reply_text(f"Заявка {app_id} не найдена")
         return
+        
     chat_id, name = result
+    message_to_user = f"{name.title()}, ваша заявка <code>{app_id}</code> выполнена!"
+    
+    if additional_text:
+        message_to_user += f"\n\n<b>Дополнительное сообщение:</b>\n{additional_text}"
+
     try:
         await context.bot.send_message(
             chat_id=chat_id,
-            text=f"{name.title()}, ваша заявка <code>{app_id}</code> выполнена!",
+            text=message_to_user,
             parse_mode=ParseMode.HTML,
         )
-        await update.message.reply_text(f"Заявка {app_id} отмечена как выполненная.")
-    except Exception:
-        await update.message.reply_text("Ошибка при отправке уведомления.")
+        
+        # Ответ сотруднику
+        reply_admin = f"Заявка {app_id} отмечена как выполненная."
+        if additional_text:
+            reply_admin += " Сообщение отправлено."
+            
+        await update.message.reply_text(reply_admin)
+        
+    except Exception as e:
+        logger.error(f"Ошибка при отправке уведомления о завершении: {e}")
+        await update.message.reply_text("Заявка закрыта, но возникла ошибка при отправке уведомления пользователю.")
 
 
 async def whisper_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
