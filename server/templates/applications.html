@@ -776,9 +776,26 @@
         noteModal.style.display = "none";
     }
 
+    var isMouseDownInside = false;
+
+    window.addEventListener('mousedown', function(e) {
+        if (e.target.closest('.modal-content') || e.target.closest('.modal-content-img')) {
+            isMouseDownInside = true;
+        } else {
+            isMouseDownInside = false;
+        }
+    });
+
     window.onclick = function(e) {
-        if (e.target === imgModal) imgModal.style.display = "none";
-        if (e.target === noteModal) noteModal.style.display = "none";
+        if (e.target === imgModal) {
+            imgModal.style.display = "none";
+        }
+        
+        if (e.target === noteModal) {
+            if (!isMouseDownInside) {
+                noteModal.style.display = "none";
+            }
+        }
     }
 
     document.addEventListener('keydown', function(e) {

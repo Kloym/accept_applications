@@ -1334,6 +1334,17 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     return ConversationHandler.END
 
+async def handle_unknown_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    warning_text = (
+        "⛔ <b>Отправка невозможна.</b>\n\n"
+        "Для того, чтобы отправить заявку или работать с уже отправленными заявками, "
+        "<b>нажмите соответствующие кнопки на интерактивной панели</b>.\n\n"
+        "Если она у вас свернута, в правом нижнем углу нажмите на квадрат с 4-мя кружками (или значок клавиатуры). "
+        "Данная кнопка находится слева от значка микрофона для записи голосовых сообщений."
+    )
+
+    await update.message.reply_text(warning_text, parse_mode=ParseMode.HTML)
+
 
 async def request_password_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id not in NOTIFY_CHAT_IDS:
