@@ -13,8 +13,10 @@ from telegram import (
     KeyboardButton,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    ReplyKeyboardRemove,  # <--- Добавлено
 )
 from telegram.constants import ParseMode
+from telegram.error import BadRequest
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -28,7 +30,7 @@ from telegram.ext import (
 from dotenv import load_dotenv
 import os
 
-# Убедитесь, что файл op.py существует, или замените импорты ниже на ваши списки
+# Импорт ваших настроек (предполагается, что файл op.py существует)
 from op import DEPARTMENTS, DEPARTMENTS_PER_PAGE
 
 load_dotenv()
@@ -43,7 +45,7 @@ TOKEN = os.getenv("TOKEN")
 BASE_SERVER_URL = "http://127.0.0.1:5000"
 DB_FILE = "applications.db"
 DEPARTMENTS = sorted(DEPARTMENTS)
-NOTIFY_CHAT_IDS = [308035415]  # ID админов
+NOTIFY_CHAT_IDS = [308035415]
 USERNAME_TO_FIO = {
     "pasheug": "Пашков Евгений Олегович",
     "NRiskin": "Рискин Никита Дмитриевич",
@@ -52,26 +54,20 @@ USERNAME_TO_FIO = {
 
 class States(Enum):
     START_ROUTES = 0
-
     START_WAIT_NAME = 1
     START_WAIT_IP = 3
     START_WAIT_DEPARTMENT = 4
     START_WAIT_DETAILS = 5
     START_WAIT_PHOTOS = 6
     START_CONFIRMATION = 7
-
     UPDATE_WAIT_ID = 10
     UPDATE_WAIT_PHOTO = 11
-
     APPEND_WAIT_ID = 20
     APPEND_WAIT_TEXT = 21
-
     RETURN_WAIT_ID = 30
     RETURN_WAIT_REASON = 31
-
     PASSWORD_REQUEST_WAIT_PASSWORD = 40
-
-    REPLY_WAIT_TEXT = 60  # <--- НОВОЕ СОСТОЯНИЕ ДЛЯ ОТВЕТА
+    REPLY_WAIT_TEXT = 60
 
 
 class ApiService:
@@ -135,22 +131,52 @@ class DbService:
         conn.row_factory = sqlite3.Row
         return conn
 
-    def mark_application_done(self, app_id, done_by):
+    def mark_application_done(self, app_id, done_by, manual_solution=None):
         conn = self._get_db()
         cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT solution FROM applications LIMIT 1")
+        except sqlite3.OperationalError:
+            cursor.execute("ALTER TABLE applications ADD COLUMN solution TEXT")
+            conn.commit()
+
         cursor.execute(
             "SELECT chat_id, name FROM applications WHERE application_id = ?", (app_id,)
         )
         row = cursor.fetchone()
+        
         if not row:
             conn.close()
             return None
+            
         chat_id, name = row["chat_id"], row["name"]
         archived_at = datetime.now().strftime("%Y-%m-%d %H:%M")
-        cursor.execute(
-            "UPDATE applications SET status = 'done', archived_at = ?, done_by = ? WHERE application_id = ?",
-            (archived_at, done_by, app_id),
-        )
+
+        if manual_solution:
+            query = """
+                UPDATE applications 
+                SET status = 'done', archived_at = ?, done_by = ?, solution = ? 
+                WHERE application_id = ?
+            """
+            params = (archived_at, done_by, manual_solution, app_id)
+            cursor.execute(query, params)
+        else:
+            query = """
+                UPDATE applications 
+                SET status = 'done', 
+                    archived_at = ?, 
+                    done_by = ?,
+                    solution = (
+                        SELECT message_text FROM messages 
+                        WHERE application_id = ? 
+                        AND message_text NOT LIKE '%[ОТВЕТ ПОЛЬЗОВАТЕЛЯ]%'
+                        ORDER BY id DESC LIMIT 1
+                    )
+                WHERE application_id = ?
+            """
+            params = (archived_at, done_by, app_id, app_id)
+            cursor.execute(query, params)
+            
         conn.commit()
         conn.close()
         return chat_id, name
@@ -278,18 +304,29 @@ def filter_departments_by_letter(departments, letter):
     return [dep for dep in departments if dep.upper().startswith(letter.upper())]
 
 
-def get_departments_inline_keyboard(page=0, filter_letter=None):
+def get_departments_inline_keyboard(page=0, filter_letter=None, saved_dep=None):
+    keyboard = []
+
+    if saved_dep:
+        # Добавляем эмодзи звезды для заметности
+        btn_text = f"⭐ {saved_dep}"
+        keyboard.append([InlineKeyboardButton(btn_text, callback_data="use_saved_dep")])
+
     if filter_letter:
         depatments = filter_departments_by_letter(DEPARTMENTS, filter_letter)
     else:
         depatments = DEPARTMENTS
+    
     start = page * DEPARTMENTS_PER_PAGE
     end = start + DEPARTMENTS_PER_PAGE
     departments_page = depatments[start:end]
-    keyboard = [
+    
+
+    keyboard.extend([
         [InlineKeyboardButton(dep, callback_data=f"dep_idx:{i}")]
         for i, dep in enumerate(departments_page, start=start)
-    ]
+    ])
+    
     nav = []
     if page > 0:
         nav.append(InlineKeyboardButton("⬅️ Назад", callback_data=f"dep_page:{page-1}"))
@@ -297,6 +334,7 @@ def get_departments_inline_keyboard(page=0, filter_letter=None):
         nav.append(InlineKeyboardButton("➡️ Далее", callback_data=f"dep_page:{page+1}"))
     if nav:
         keyboard.append(nav)
+        
     used_letters = sorted(set(dep[0].upper() for dep in DEPARTMENTS))
     letters_per_row = 7
     letter_buttons = [
@@ -309,6 +347,10 @@ def get_departments_inline_keyboard(page=0, filter_letter=None):
     ]
     keyboard.extend(letter_rows)
     keyboard.append([InlineKeyboardButton("Все", callback_data="dep_letter:all")])
+    
+    # Добавляем кнопку отмены в сам inline-блок
+    keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel_action")])
+    
     return InlineKeyboardMarkup(keyboard)
 
 
@@ -339,44 +381,44 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def finish_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args
     if not args or len(args[0]) != 8:
-        await update.message.reply_text("Укажите id заявки, например: /q 1234abcd [текст сообщения]")
+        await update.message.reply_text("Укажите id заявки, например: /q 1234abcd [решение]")
         return
-    
     app_id = args[0]
     additional_text = " ".join(args[1:]) if len(args) > 1 else None
 
     username = update.effective_user.username
     done_by = USERNAME_TO_FIO.get(username, username)
     
-    result = await asyncio.to_thread(db_service.mark_application_done, app_id, done_by)
-    
+    result = await asyncio.to_thread(
+        db_service.mark_application_done, 
+        app_id, 
+        done_by, 
+        additional_text
+    )
     if not result:
         await update.message.reply_text(f"Заявка {app_id} не найдена")
         return
         
     chat_id, name = result
-    message_to_user = f"{name.title()}, ваша заявка <code>{app_id}</code> выполнена!"
-    
+    msg_user = f"{name.title()}, ваша заявка <code>{app_id}</code> выполнена!"
     if additional_text:
-        message_to_user += f"\n\n<b>Дополнительное сообщение:</b>\n{additional_text}"
+        msg_user += f"\n\n<b>Дополнительное сообщение:</b>\n{additional_text.capitalize()}"
 
     try:
         await context.bot.send_message(
             chat_id=chat_id,
-            text=message_to_user,
+            text=msg_user,
             parse_mode=ParseMode.HTML,
         )
-        
-        # Ответ сотруднику
-        reply_admin = f"Заявка {app_id} отмечена как выполненная."
+        confirm_msg = f"Заявка {app_id} закрыта."
         if additional_text:
-            reply_admin += " Сообщение отправлено."
-            
-        await update.message.reply_text(reply_admin)
-        
+            confirm_msg += " Решение записано из команды."
+        else:
+            confirm_msg += " В решение записано последнее сообщение из чата."
+        await update.message.reply_text(confirm_msg)
     except Exception as e:
-        logger.error(f"Ошибка при отправке уведомления о завершении: {e}")
-        await update.message.reply_text("Заявка закрыта, но возникла ошибка при отправке уведомления пользователю.")
+        logger.error(f"Ошибка finish_command: {e}")
+        await update.message.reply_text("Заявка закрыта, но уведомление не отправлено.")
 
 
 async def whisper_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -493,6 +535,7 @@ async def restore_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def conv_ask_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     saved_name = context.user_data.get("saved_name")
     saved_ip = context.user_data.get("saved_ip")
+    saved_dep = context.user_data.get("saved_department")
 
     context.user_data.clear()
 
@@ -500,6 +543,8 @@ async def conv_ask_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["saved_name"] = saved_name
     if saved_ip:
         context.user_data["saved_ip"] = saved_ip
+    if saved_dep:
+        context.user_data["saved_department"] = saved_dep
 
     text = '<b>👋 Введите ФИО:</b>\n\n(Или нажмите кнопку "Отменить действие")'
     buttons = [[KeyboardButton(BTN_CANCEL)]]
@@ -562,18 +607,66 @@ async def conv_ask_department(update: Update, context: ContextTypes.DEFAULT_TYPE
     context.user_data["saved_ip"] = ip_address
     context.user_data["dep_page"] = 0
 
+    bridge_keyboard = ReplyKeyboardMarkup(
+        [[KeyboardButton("📂 Выбрать отделение")], [KeyboardButton(BTN_CANCEL)]],
+        resize_keyboard=True,
+        one_time_keyboard=True
+    )
+
+
+    msg = await update.message.reply_text(
+        "IP принят ✔️\nНажмите кнопку ниже, чтобы открыть список.",
+        reply_markup=bridge_keyboard
+    )
+    
+    context.user_data["msg_to_delete"] = msg.message_id
+
+    
+    return States.START_WAIT_DEPARTMENT
+
+
+async def conv_show_departments_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if "msg_to_delete" in context.user_data:
+        try:
+            await context.bot.delete_message(
+                chat_id=update.effective_chat.id, 
+                message_id=context.user_data["msg_to_delete"]
+            )
+        except Exception:
+            pass
+        del context.user_data["msg_to_delete"]
+
+    try:
+        await update.message.delete()
+    except Exception:
+        pass
+
+    waiting_msg = await update.message.reply_text(
+        "Загрузка списка...", 
+        reply_markup=ReplyKeyboardRemove()
+    )
+
+    saved_dep = context.user_data.get("saved_department")
+
     await update.message.reply_text(
         "<b>🗂️ Выберите отделение:</b>",
-        reply_markup=get_departments_inline_keyboard(0),
+        reply_markup=get_departments_inline_keyboard(0, saved_dep=saved_dep),
         parse_mode=ParseMode.HTML,
     )
+    
+    try:
+        await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=waiting_msg.message_id)
+    except:
+        pass
+
     return States.START_WAIT_DEPARTMENT
 
 
 async def department_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
-    await query.answer()
+
+    saved_dep = context.user_data.get("saved_department")
 
     filter_letter = context.user_data.get("dep_filter")
     departments = (
@@ -582,18 +675,57 @@ async def department_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         else DEPARTMENTS
     )
 
-    if data.startswith("dep_page:"):
-        page = int(data.split(":")[1])
-        context.user_data["dep_page"] = page
-        await query.edit_message_reply_markup(
-            reply_markup=get_departments_inline_keyboard(page, filter_letter)
-        )
+    if data == "use_saved_dep":
+        await query.answer()
+        if saved_dep:
+            context.user_data["department"] = saved_dep
+            await query.edit_message_text(f"Вы выбрали: {saved_dep} (из сохраненных)")
+            await context.bot.send_message(
+                chat_id=update.effective_user.id,
+                text="<b>✍️ Опишите проблему:</b>",
+                parse_mode=ParseMode.HTML,
+                reply_markup=CANCEL_KEYBOARD,
+            )
+            return States.START_WAIT_DETAILS
+        else:
+            await query.answer("Сохраненное отделение не найдено", show_alert=True)
+            return States.START_WAIT_DEPARTMENT
+
+    if data.startswith("dep_page:") or data.startswith("dep_letter:"):
+        await query.answer()
+        
+        if data.startswith("dep_page:"):
+            page = int(data.split(":")[1])
+            context.user_data["dep_page"] = page
+        
+        elif data.startswith("dep_letter:"):
+            letter = data.split(":", 1)[1]
+            if letter == "all":
+                context.user_data.pop("dep_filter", None)
+            else:
+                context.user_data["dep_filter"] = letter
+            context.user_data["dep_page"] = 0
+
+        try:
+            await query.edit_message_reply_markup(
+                reply_markup=get_departments_inline_keyboard(
+                    context.user_data.get("dep_page", 0), 
+                    context.user_data.get("dep_filter"), 
+                    saved_dep
+                )
+            )
+        except BadRequest:
+            pass
+            
         return States.START_WAIT_DEPARTMENT
 
     if data.startswith("dep_idx:"):
+        await query.answer()
         idx = int(data.split(":", 1)[1])
         dep = departments[idx]
         context.user_data["department"] = dep
+        context.user_data["saved_department"] = dep
+
         await query.edit_message_text(f"Вы выбрали: {dep}")
         await context.bot.send_message(
             chat_id=update.effective_user.id,
@@ -602,20 +734,6 @@ async def department_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             reply_markup=CANCEL_KEYBOARD,
         )
         return States.START_WAIT_DETAILS
-
-    if data.startswith("dep_letter:"):
-        letter = data.split(":", 1)[1]
-        if letter == "all":
-            context.user_data.pop("dep_filter", None)
-        else:
-            context.user_data["dep_filter"] = letter
-        context.user_data["dep_page"] = 0
-        await query.edit_message_reply_markup(
-            reply_markup=get_departments_inline_keyboard(
-                0, context.user_data.get("dep_filter")
-            )
-        )
-        return States.START_WAIT_DEPARTMENT
 
 
 async def conv_ask_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -700,8 +818,10 @@ async def conv_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     success = await api_client.post_new_application(data)
 
+    # --- ИСПРАВЛЕНИЕ ЗАПОМИНАНИЯ ---
     saved_name = context.user_data.get("name")
     saved_ip = context.user_data.get("ip_address")
+    saved_dep = context.user_data.get("department") # Берем текущее отделение
 
     context.user_data.clear()
 
@@ -709,6 +829,9 @@ async def conv_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["saved_name"] = saved_name
     if saved_ip:
         context.user_data["saved_ip"] = saved_ip
+    if saved_dep:
+        context.user_data["saved_department"] = saved_dep # Возвращаем обратно
+    # -------------------------------
 
     chat_id = update.effective_user.id
 
@@ -1186,11 +1309,13 @@ async def process_reply_text(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     saved_name = context.user_data.get('saved_name')
     saved_ip = context.user_data.get('saved_ip')
+    saved_dep = context.user_data.get('saved_department')
     
     context.user_data.clear()
     
     if saved_name: context.user_data['saved_name'] = saved_name
     if saved_ip: context.user_data['saved_ip'] = saved_ip
+    if saved_dep: context.user_data['saved_department'] = saved_dep
 
     query = update.callback_query
     if query:
@@ -1275,6 +1400,14 @@ async def conv_password_receive(update: Update, context: ContextTypes.DEFAULT_TY
         )
     return ConversationHandler.END
 
+async def handle_unknown_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "⚠️ <b>Я не понимаю это сообщение.</b>\n\n"
+        "Пожалуйста, используйте кнопки меню для работы с ботом.\n"
+        "Если меню пропало, отправьте команду /start",
+        parse_mode=ParseMode.HTML,
+        reply_markup=MAIN_KEYBOARD
+    )
 
 def main():
     my_persistence = PicklePersistence(filepath='bot_data.pickle')
@@ -1304,7 +1437,14 @@ def main():
                 MessageHandler(filters.TEXT & ~filters.COMMAND, conv_ask_department),
             ],
             States.START_WAIT_DEPARTMENT: [
-                CallbackQueryHandler(department_callback, pattern="^dep_")
+                MessageHandler(filters.Text("📂 Выбрать отделение"), conv_show_departments_list),
+                
+                CallbackQueryHandler(department_callback, pattern="^dep_"),
+                CallbackQueryHandler(department_callback, pattern="^use_saved_dep"),
+
+                CallbackQueryHandler(cancel, pattern="^cancel_action$"),
+                
+                cancel_handler
             ],
             States.START_WAIT_DETAILS: [
                 cancel_handler,
@@ -1391,6 +1531,13 @@ def main():
     )
     application.add_handler(
         CallbackQueryHandler(back_to_list_callback, pattern="^back_to_active_list$")
+    )
+
+    application.add_handler(
+        MessageHandler(
+            (filters.TEXT | filters.PHOTO | filters.Document.ALL) & ~filters.COMMAND, 
+            handle_unknown_message
+        )
     )
 
     application.run_polling()

@@ -92,7 +92,8 @@ def init_db():
         archived_at TEXT,
         done_by TEXT,
         difficulty TEXT DEFAULT 'low',
-        staff_notes TEXT  -- <--- НОВОЕ ПОЛЕ
+        staff_notes TEXT,
+        solution TEXT
     )"""
     )
 
@@ -176,10 +177,6 @@ def repo_set_difficulty(application_id: int, difficulty: str):
 
 
 def repo_get_applications_paginated(status: str, page: int, per_page: int):
-    """
-    Получает список заявок (active/done).
-    Для done дополнительно подтягивает ПОСЛЕДНЕЕ сообщение как 'solution'.
-    """
     db = get_db()
 
     cur_count = db.execute(
@@ -221,17 +218,33 @@ def repo_get_applications_paginated(status: str, page: int, per_page: int):
                 app_data[date_field] = None
 
         if status == 'done':
-            cur_msg = db.execute(
-                """
-                SELECT message_text FROM messages 
-                WHERE application_id = ? 
-                AND message_text NOT LIKE '[ОТВЕТ ПОЛЬЗОВАТЕЛЯ]%' 
-                ORDER BY created_at DESC LIMIT 1
-                """,
-                (app_data['application_id'],)
-            )
-            msg_row = cur_msg.fetchone()
-            app_data['solution'] = msg_row['message_text'] if msg_row else None
+            manual_solution = app_data.get('solution')
+
+            if manual_solution and "[ОТВЕТ ПОЛЬЗОВАТЕЛЯ]" in str(manual_solution):
+                manual_solution = None
+
+            if not manual_solution:
+                cur_msgs = db.execute(
+                    """
+                    SELECT message_text FROM messages 
+                    WHERE application_id = ? 
+                    ORDER BY created_at DESC LIMIT 20
+                    """,
+                    (app_data['application_id'],)
+                )
+                messages = cur_msgs.fetchall()
+                
+                found_text = None
+                for msg in messages:
+                    text = msg['message_text']
+
+                    if "[ОТВЕТ ПОЛЬЗОВАТЕЛЯ]" not in text:
+                        found_text = text
+                        break 
+                
+                app_data['solution'] = found_text
+
+
         applications.append(app_data)
 
     return applications, total_pages
@@ -273,10 +286,12 @@ def repo_get_raw_apps_for_export() -> list:
     db = get_db()
     query = """
         SELECT a.*, 
-        (SELECT message_text FROM messages m 
-         WHERE m.application_id = a.application_id 
-         AND m.message_text NOT LIKE '[ОТВЕТ ПОЛЬЗОВАТЕЛЯ]%' 
-         ORDER BY m.created_at DESC LIMIT 1) as solution 
+        COALESCE(a.solution, 
+            (SELECT message_text FROM messages m 
+             WHERE m.application_id = a.application_id 
+             AND m.message_text NOT LIKE '[ОТВЕТ ПОЛЬЗОВАТЕЛЯ]%' 
+             ORDER BY m.created_at DESC LIMIT 1)
+        ) as solution 
         FROM applications a 
         WHERE a.status = 'done'
     """
