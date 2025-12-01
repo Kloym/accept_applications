@@ -13,10 +13,10 @@ from telegram import (
     KeyboardButton,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    ReplyKeyboardRemove,  # <--- Добавлено
+    ReplyKeyboardRemove,
 )
 from telegram.constants import ParseMode
-from telegram.error import BadRequest
+from telegram.error import BadRequest, Forbidden
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -30,7 +30,6 @@ from telegram.ext import (
 from dotenv import load_dotenv
 import os
 
-# Импорт ваших настроек (предполагается, что файл op.py существует)
 from op import DEPARTMENTS, DEPARTMENTS_PER_PAGE
 
 load_dotenv()
@@ -190,6 +189,14 @@ class DbService:
         row = cursor.fetchone()
         conn.close()
         return (row["chat_id"], row["name"]) if row else None
+    
+    def get_all_chat_ids(self):
+        conn = self._get_db()
+        cursor = conn.cursor()
+        cursor.execute("SELECT DISTINCT chat_id FROM applications")
+        rows = cursor.fetchall()
+        conn.close()
+        return [row["chat_id"] for row in rows]
 
     def get_done_apps_by_chat_id(self, chat_id, limit=5):
         conn = self._get_db()
@@ -348,7 +355,6 @@ def get_departments_inline_keyboard(page=0, filter_letter=None, saved_dep=None):
     keyboard.extend(letter_rows)
     keyboard.append([InlineKeyboardButton("Все", callback_data="dep_letter:all")])
     
-    # Добавляем кнопку отмены в сам inline-блок
     keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel_action")])
     
     return InlineKeyboardMarkup(keyboard)
@@ -530,6 +536,57 @@ async def restore_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Заявка {app_id} восстановлена.")
     except Exception:
         await update.message.reply_text("Ошибка при уведомлении.")
+
+async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id not in NOTIFY_CHAT_IDS:
+        await update.message.reply_text("⛔ У вас нет прав для рассылки.")
+        return
+
+    message_to_send = " ".join(context.args)
+    
+    if not message_to_send:
+        await update.message.reply_text(
+            "⚠️ Введите текст рассылки.\nПример: <code>/broadcast Внимание! Технические работы.</code>",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    chat_ids = await asyncio.to_thread(db_service.get_all_chat_ids)
+    
+    if not chat_ids:
+        await update.message.reply_text("В базе нет пользователей для рассылки.")
+        return
+
+    await update.message.reply_text(f"🚀 Начинаю рассылку для {len(chat_ids)} пользователей...")
+
+    success_count = 0
+    block_count = 0
+    error_count = 0
+
+    for chat_id in chat_ids:
+        try:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"📢 <b>ОБЪЯВЛЕНИЕ</b>\n\n{message_to_send.capitalize()}",
+                parse_mode=ParseMode.HTML
+            )
+            success_count += 1
+            await asyncio.sleep(0.05) 
+            
+        except Forbidden:
+            block_count += 1
+        except Exception as e:
+            logger.error(f"Ошибка рассылки для {chat_id}: {e}")
+            error_count += 1
+
+    await update.message.reply_text(
+        f"✅ <b>Рассылка завершена!</b>\n\n"
+        f"Успешно: {success_count}\n"
+        f"Заблокировали бота: {block_count}\n"
+        f"Ошибки: {error_count}",
+        parse_mode=ParseMode.HTML
+    )
 
 
 async def conv_ask_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -818,10 +875,9 @@ async def conv_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     success = await api_client.post_new_application(data)
 
-    # --- ИСПРАВЛЕНИЕ ЗАПОМИНАНИЯ ---
     saved_name = context.user_data.get("name")
     saved_ip = context.user_data.get("ip_address")
-    saved_dep = context.user_data.get("department") # Берем текущее отделение
+    saved_dep = context.user_data.get("department")
 
     context.user_data.clear()
 
@@ -830,8 +886,7 @@ async def conv_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if saved_ip:
         context.user_data["saved_ip"] = saved_ip
     if saved_dep:
-        context.user_data["saved_department"] = saved_dep # Возвращаем обратно
-    # -------------------------------
+        context.user_data["saved_department"] = saved_dep
 
     chat_id = update.effective_user.id
 
@@ -1536,6 +1591,7 @@ def main():
     application.add_handler(CommandHandler("w", whisper_command))
     application.add_handler(CommandHandler("e", restore_command))
     application.add_handler(CommandHandler("r", request_password_command))
+    application.add_handler(CommandHandler("b", broadcast_command))
 
     application.add_handler(
         CallbackQueryHandler(check_status_callback, pattern="^check_status:")
