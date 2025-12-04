@@ -203,10 +203,19 @@ def repo_get_applications_paginated(status: str, page: int, per_page: int):
             photo_paths = json.loads(app_data.get("photos", "[]"))
         except (json.JSONDecodeError, TypeError):
             photo_paths = []
-        app_data["photo_objects"] = [
-            {"url": url_for("uploaded_file", filename=p), "filename": p}
-            for p in photo_paths
-        ]
+
+        file_objects = []
+        for p in photo_paths:
+            ext = p.split('.')[-1].lower()
+            is_image = ext in ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp']
+            file_objects.append({
+                "url": url_for("uploaded_file", filename=p),
+                "filename": p,
+                "is_image": is_image,
+                "extension": ext
+            })
+        
+        app_data["photo_objects"] = file_objects
 
         for date_field in ["created_at", "archived_at"]:
             try:
@@ -436,12 +445,22 @@ def add_application():
         return jsonify({"error": "No data provided"}), 400
 
     application_id = data.get("application_id")
-    photo_paths = []
-    for idx, photo_b64 in enumerate(data.get("photos", [])):
-        filename = f"{application_id}_{idx}.jpg"
-        saved_name = file_service.save_photo_from_b64(photo_b64, filename)
-        if saved_name:
-            photo_paths.append(saved_name)
+    file_paths = []
+
+    attachments = data.get("attachments", [])
+
+    if not attachments and data.get("photos"):
+        attachments = [{"b64": p, "extension": "jpg"} for p in data.get("photos")]
+
+    for idx, file_data in enumerate(attachments):
+        photo_b64 = file_data.get("b64")
+        extension = file_data.get("extension", "jpg").replace('.', '')
+        
+        if photo_b64:
+            filename = f"{application_id}_{idx}.{extension}"
+            saved_name = file_service.save_photo_from_b64(photo_b64, filename)
+            if saved_name:
+                file_paths.append(saved_name)
 
     db_data = {
         "name": data.get("name", "").title(),
@@ -453,7 +472,7 @@ def add_application():
         "chat_id": data.get("chat_id"),
         "status": data.get("status", "active"),
         "difficulty": data.get("difficulty", "low"),
-        "photos_json": json.dumps(photo_paths),
+        "photos_json": json.dumps(file_paths),
         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
     }
 
@@ -479,20 +498,25 @@ def update_photos():
     data = request.get_json()
     application_id = data.get("application_id")
     username = data.get("username")
-    photos_b64_list = data.get("photos", [])
+    
+    attachments = data.get("attachments", [])
+    if not attachments and data.get("photos"):
+        attachments = [{"b64": p, "extension": "jpg"} for p in data.get("photos")]
 
-    if not all([application_id, username, photos_b64_list]):
+    if not all([application_id, username, attachments]):
         return jsonify({"error": "Missing required fields"}), 400
 
     saved_names_list = []
-    for idx, photo_b64 in enumerate(photos_b64_list):
-        filename = (
-            f"{application_id}_updated_{int(datetime.now().timestamp())}_{idx}.jpg"
-        )
+    for idx, file_data in enumerate(attachments):
+        photo_b64 = file_data.get("b64")
+        extension = file_data.get("extension", "jpg").replace('.', '')
+        
+        filename = f"{application_id}_upd_{int(datetime.now().timestamp())}_{idx}.{extension}"
+        
         saved_name = file_service.save_photo_from_b64(photo_b64, filename)
         if not saved_name:
             file_service.delete_photos(saved_names_list)
-            return jsonify({"error": "Failed to save photo"}), 500
+            return jsonify({"error": "Failed to save file"}), 500
         saved_names_list.append(saved_name)
 
     success = repo_append_photos(application_id, username, saved_names_list)
@@ -500,7 +524,7 @@ def update_photos():
         file_service.delete_photos(saved_names_list)
         return jsonify({"error": "Заявка не найдена или не принадлежит вам"}), 404
 
-    return jsonify({"message": "Фото обновлены"}), 200
+    return jsonify({"message": "Файлы добавлены"}), 200
 
 
 @app.route("/append_details", methods=["POST"])
@@ -670,7 +694,17 @@ def delete_photo(app_id, filename):
 
 @app.route("/uploads/<filename>")
 def uploaded_file(filename):
-    return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
+    ext = filename.split('.')[-1].lower()
+    
+    image_extensions = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp']
+    
+    is_attachment = ext not in image_extensions
+    
+    return send_from_directory(
+        app.config["UPLOAD_FOLDER"], 
+        filename, 
+        as_attachment=is_attachment
+    )
 
 
 @app.route("/update_notes/<int:app_id>", methods=["POST"])

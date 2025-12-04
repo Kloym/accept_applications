@@ -1,5 +1,6 @@
 import logging
 import base64
+import requests
 import aiohttp
 import sqlite3
 import uuid
@@ -90,11 +91,11 @@ class ApiService:
         status, _ = await self._post_json("applications", data)
         return status == 201
 
-    async def update_photos(self, application_id, username, photos_b64_list):
+    async def update_photos(self, application_id, username, attachments_list):
         data = {
             "application_id": application_id,
             "username": username,
-            "photos": photos_b64_list,
+            "attachments": attachments_list,
         }
         status, _ = await self._post_json("update_photos", data)
         return status == 200
@@ -876,33 +877,43 @@ async def conv_ask_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def conv_add_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    photo_b64 = None
+    file_data = {"b64": None, "extension": "jpg"}
+
     try:
+        file_obj = None
+
         if update.message.photo:
-            file = await context.bot.get_file(update.message.photo[-1].file_id)
-            photo_b64 = base64.b64encode(await file.download_as_bytearray()).decode(
-                "utf-8"
-            )
-        elif update.message.document and update.message.document.mime_type.startswith(
-            "image/"
-        ):
-            file = await context.bot.get_file(update.message.document.file_id)
-            photo_b64 = base64.b64encode(await file.download_as_bytearray()).decode(
-                "utf-8"
-            )
+            file_obj = await context.bot.get_file(update.message.photo[-1].file_id)
+            file_data["extension"] = "jpg"
+
+        elif update.message.document:
+            doc = update.message.document
+            file_obj = await context.bot.get_file(doc.file_id)
+            if doc.file_name and "." in doc.file_name:
+                file_data["extension"] = doc.file_name.split(".")[-1].lower()
+            else:
+                file_data["extension"] = "bin"
+
         else:
-            await update.message.reply_text("Это не фото. Пришлите фото или нажмите 'Done'", reply_markup=DONE_KEYBOARD)
+            await update.message.reply_text("Пожалуйста, пришлите фото или файл (Word/Excel).", reply_markup=DONE_KEYBOARD)
             return States.START_WAIT_PHOTOS
 
-        if "photos" not in context.user_data:
-            context.user_data["photos"] = []
-        context.user_data["photos"].append(photo_b64)
+        if file_obj:
+            downloaded_bytes = await file_obj.download_as_bytearray()
+            file_data["b64"] = base64.b64encode(downloaded_bytes).decode("utf-8")
+
+        if "attachments" not in context.user_data:
+            context.user_data["attachments"] = []
+        
+        context.user_data["attachments"].append(file_data)
+
         await update.message.reply_text(
-            f"Фото {len(context.user_data['photos'])} добавлено.",
+            f"Файл {len(context.user_data['attachments'])} добавлен ({file_data['extension']}).",
             reply_markup=DONE_KEYBOARD,
         )
+
     except Exception as e:
-        logger.error(f"Photo error: {e}")
+        logger.error(f"File upload error: {e}")
         await update.message.reply_text(
             "Ошибка обработки файла.", reply_markup=DONE_KEYBOARD
         )
@@ -911,9 +922,11 @@ async def conv_add_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def conv_show_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     d = context.user_data
+    files_count = len(d.get('attachments', []))
+    
     summary = (
         f"<b>Проверьте данные:</b>\n\n<b>ФИО:</b> {d.get('name')}\n<b>IP:</b> {d.get('ip_address')}\n"
-        f"<b>Отделение:</b> {d.get('department')}\n<b>Описание:</b> {d.get('details')}\n<b>Фото:</b> {len(d.get('photos', []))} шт.\n\nВсё верно?"
+        f"<b>Отделение:</b> {d.get('department')}\n<b>Описание:</b> {d.get('details')}\n<b>Вложений:</b> {files_count} шт.\n\nВсё верно?"
     )
     await update.message.reply_text(
         summary, parse_mode=ParseMode.HTML, reply_markup=CONFIRM_KEYBOARD
@@ -930,13 +943,12 @@ async def conv_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     app_id = str(uuid.uuid4())[:8]
-
     data = {
         "name": context.user_data.get("name"),
         "ip": context.user_data.get("ip_address"),
         "department": context.user_data.get("department"),
         "details": context.user_data.get("details"),
-        "photos": context.user_data.get("photos", []),
+        "attachments": context.user_data.get("attachments", []),
         "chat_id": update.effective_user.id,
         "username": update.effective_user.username or "",
         "application_id": app_id,
@@ -944,6 +956,14 @@ async def conv_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
 
     success = await api_client.post_new_application(data)
+    
+    msg_admin = (
+        f"🔔 <b>Новая заявка!</b> 🔔\n\n"
+        f"<b>ID:</b> <code>{app_id}</code>\n"
+        f"<b>От:</b> {data['name']}\n"
+        f"<b>Файлов:</b> {len(data['attachments'])} шт.\n\n"
+        f"<b>Описание:</b>\n{data['details'][:40]}..."
+    )
 
     saved_name = context.user_data.get("name")
     saved_ip = context.user_data.get("ip_address")
@@ -951,12 +971,9 @@ async def conv_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data.clear()
 
-    if saved_name:
-        context.user_data["saved_name"] = saved_name
-    if saved_ip:
-        context.user_data["saved_ip"] = saved_ip
-    if saved_dep:
-        context.user_data["saved_department"] = saved_dep
+    if saved_name: context.user_data["saved_name"] = saved_name
+    if saved_ip: context.user_data["saved_ip"] = saved_ip
+    if saved_dep: context.user_data["saved_department"] = saved_dep
 
     chat_id = update.effective_user.id
 
@@ -967,29 +984,15 @@ async def conv_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=MAIN_KEYBOARD,
         )
         return ConversationHandler.END
+        
     final_text = (
         f"<b>✅ Ваша заявка принята в работу!</b>\n"
         f"Уникальный идентификатор заявки: <code>{app_id}</code>\n\n"
-        "Чтобы подать новую заявку, нажмите Start.\n"
-        "Для добавления скриншота(фото) по заявке — Добавить фото.\n"
-        "Для дополнения текста — Дополнить заявку.\n"
-        "Для проверки статуса — Проверить статус заявки.\n"
-        "Для возврата заявки - Вернуть заявку в работу."
+        "Чтобы подать новую заявку, нажмите Start."
     )
 
     await context.bot.send_message(
         chat_id, final_text, parse_mode=ParseMode.HTML, reply_markup=MAIN_KEYBOARD
-    )
-
-    trunc_det = (
-        data["details"][:40] + "..." if len(data["details"]) > 40 else data["details"]
-    )
-    msg_admin = (
-        f"🔔 <b>Новая заявка!</b> 🔔\n\n"
-        f"<b>ID:</b> <code>{app_id}</code>\n"
-        f"<b>От:</b> {data['name']}\n"
-        f"<b>Фото:</b> {len(data['photos'])} шт.\n\n"
-        f"<b>Описание:</b>\n{trunc_det}"
     )
 
     for nid in NOTIFY_CHAT_IDS:
@@ -1069,54 +1072,56 @@ async def conv_ask_update_photo(update: Update, context: ContextTypes.DEFAULT_TY
     return States.UPDATE_WAIT_PHOTO
 
 
-async def conv_process_update_photo_add(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-):
+async def conv_process_update_photo_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    file_data = {"b64": None, "extension": "jpg"}
     try:
-        photo_b64 = None
+        file_obj = None
         if update.message.photo:
-            file = await context.bot.get_file(update.message.photo[-1].file_id)
-            photo_b64 = base64.b64encode(await file.download_as_bytearray()).decode(
-                "utf-8"
-            )
-        elif update.message.document and update.message.document.mime_type.startswith(
-            "image/"
-        ):
-            file = await context.bot.get_file(update.message.document.file_id)
-            photo_b64 = base64.b64encode(await file.download_as_bytearray()).decode(
-                "utf-8"
-            )
+            file_obj = await context.bot.get_file(update.message.photo[-1].file_id)
+            file_data["extension"] = "jpg"
+        elif update.message.document:
+            doc = update.message.document
+            file_obj = await context.bot.get_file(doc.file_id)
+            if doc.file_name and "." in doc.file_name:
+                file_data["extension"] = doc.file_name.split(".")[-1].lower()
+            else:
+                file_data["extension"] = "bin"
+        else:
+             await update.message.reply_text("Это не фото и не файл.", reply_markup=DONE_KEYBOARD)
+             return States.UPDATE_WAIT_PHOTO
 
-        if photo_b64:
-            if "update_photos" not in context.user_data:
-                context.user_data["update_photos"] = []
-            context.user_data["update_photos"].append(photo_b64)
+        if file_obj:
+            downloaded_bytes = await file_obj.download_as_bytearray()
+            file_data["b64"] = base64.b64encode(downloaded_bytes).decode("utf-8")
+            
+            if "update_attachments" not in context.user_data:
+                context.user_data["update_attachments"] = []
+            context.user_data["update_attachments"].append(file_data)
+            
             await update.message.reply_text(
-                f"Фото {len(context.user_data['update_photos'])} добавлено.",
+                f"Файл {len(context.user_data['update_attachments'])} добавлен.",
                 reply_markup=DONE_KEYBOARD,
             )
-        else:
-            await update.message.reply_text("Это не фото.", reply_markup=DONE_KEYBOARD)
-    except Exception:
-        await update.message.reply_text("Ошибка фото.", reply_markup=DONE_KEYBOARD)
+    except Exception as e:
+        logger.error(f"Update upload error: {e}")
+        await update.message.reply_text("Ошибка загрузки.", reply_markup=DONE_KEYBOARD)
     return States.UPDATE_WAIT_PHOTO
 
 
-async def conv_process_update_photo_done(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-):
+async def conv_process_update_photo_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     app_id = context.user_data.get("update_id")
-    photos = context.user_data.get("update_photos", [])
-    if not photos:
+    attachments = context.user_data.get("update_attachments", [])
+    
+    if not attachments:
         await update.message.reply_text(
-            "Фото не были отправлены.", reply_markup=MAIN_KEYBOARD
+            "Файлы не были отправлены.", reply_markup=MAIN_KEYBOARD
         )
         context.user_data.clear()
         return ConversationHandler.END
 
     await update.message.reply_text("Загрузка...", reply_markup=MAIN_KEYBOARD)
-    if await api_client.update_photos(app_id, update.effective_user.username, photos):
-        await update.message.reply_text("✅ Фото добавлены!")
+    if await api_client.update_photos(app_id, update.effective_user.username, attachments):
+        await update.message.reply_text("✅ Файлы добавлены!")
     else:
         await update.message.reply_text("❌ Ошибка (заявка не найдена).")
     context.user_data.clear()
@@ -1590,7 +1595,7 @@ def main():
             States.START_WAIT_PHOTOS: [
                 MessageHandler(filters.Text("✔️ Done"), conv_show_confirmation),
                 MessageHandler(filters.Text("❌ Отменить все"), cancel),
-                MessageHandler(filters.PHOTO | filters.Document.IMAGE, conv_add_photo),
+                MessageHandler(filters.PHOTO | filters.Document.ALL, conv_add_photo),
             ],
             States.START_CONFIRMATION: [
                 CallbackQueryHandler(conv_done, pattern="^confirm_send$"),
@@ -1603,7 +1608,7 @@ def main():
             ],
             States.UPDATE_WAIT_PHOTO: [
                 MessageHandler(
-                    filters.PHOTO | filters.Document.IMAGE,
+                    filters.PHOTO | filters.Document.ALL,
                     conv_process_update_photo_add,
                 ),
                 MessageHandler(filters.Text("✔️ Done"), conv_process_update_photo_done),
