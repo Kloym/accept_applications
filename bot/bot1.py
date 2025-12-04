@@ -274,6 +274,7 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
         [KeyboardButton("Дополнить заявку")],
         [KeyboardButton("Проверить статус заявки")],
         [KeyboardButton("Вернуть заявку в работу")],
+        [KeyboardButton("📚 Инструкция")],
     ],
     resize_keyboard=True,
 )
@@ -376,55 +377,124 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "2. Следуйте инструкциям бота: введите ФИО, IP-адрес, выберите отделение и опишите проблему.\n"
         "3. При необходимости прикрепите фото.\n"
         "4. После отправки заявки вы получите уникальный ID. При нажатии на ID вы удобно можете его скопировать.\n\n"
-        "Вы можете отменить любое действие в любой момент, отправив команду /cancel или нажав кнопку Отменить."
+        "Вы можете отменить любое действие в любой момент, отправив команду /cancel или нажав кнопку Отменить.\n\n"
+        "Если где-то при заполнении заявки возникает ошибка пропишите в чат /start"
     )
     await update.message.reply_text(
         start_text, reply_markup=MAIN_KEYBOARD, parse_mode=ParseMode.HTML
     )
     return ConversationHandler.END
 
+async def send_instruction(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    filename = "manual.docx"
+
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    file_path = os.path.join(current_dir, filename)
+    
+    if not os.path.exists(file_path):
+        await update.message.reply_text("Файл инструкции временно недоступен.")
+        logger.error(f"Файл не найден по пути: {file_path}")
+        return ConversationHandler.END
+
+    try:
+        await update.message.reply_document(
+            document=open(file_path, "rb"),
+            caption="📄 <b>Инструкция по использованию бота</b>",
+            parse_mode=ParseMode.HTML,
+            filename="Инструкция_по_использованию_бота.docx"
+        )
+    except Exception as e:
+        logger.error(f"Ошибка при отправке инструкции: {e}")
+        await update.message.reply_text("Произошла ошибка при отправке файла.")
+        
+    return ConversationHandler.END
 
 async def finish_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args
     if not args or len(args[0]) != 8:
         await update.message.reply_text("Укажите id заявки, например: /q 1234abcd [решение]")
         return
+    
     app_id = args[0]
     additional_text = " ".join(args[1:]) if len(args) > 1 else None
 
+    file_id = None
+    file_type = None
+    reply_message = update.message.reply_to_message
+    
+    if reply_message:
+        if reply_message.photo:
+            file_id = reply_message.photo[-1].file_id
+            file_type = "photo"
+        elif (
+            reply_message.document
+            and reply_message.document.mime_type
+            and reply_message.document.mime_type.startswith("image/")
+        ):
+            file_id = reply_message.document.file_id
+            file_type = "document"
+
     username = update.effective_user.username
     done_by = USERNAME_TO_FIO.get(username, username)
-    
+
+    db_solution = additional_text
+    if not db_solution and file_id:
+        db_solution = "[Отправлено фото решения]"
+
     result = await asyncio.to_thread(
         db_service.mark_application_done, 
         app_id, 
         done_by, 
-        additional_text
+        db_solution
     )
+    
     if not result:
         await update.message.reply_text(f"Заявка {app_id} не найдена")
         return
         
     chat_id, name = result
+    
     msg_user = f"{name.title()}, ваша заявка <code>{app_id}</code> выполнена!"
     if additional_text:
         msg_user += f"\n\n<b>Дополнительное сообщение:</b>\n{additional_text.capitalize()}"
 
     try:
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=msg_user,
-            parse_mode=ParseMode.HTML,
-        )
-        confirm_msg = f"Заявка {app_id} закрыта."
+        if file_type == "photo":
+            await context.bot.send_photo(
+                chat_id=chat_id,
+                photo=file_id,
+                caption=msg_user,
+                parse_mode=ParseMode.HTML,
+            )
+            confirm_msg = f"Заявка {app_id} закрыта (фото отправлено)."
+            
+        elif file_type == "document":
+            await context.bot.send_document(
+                chat_id=chat_id,
+                document=file_id,
+                caption=msg_user,
+                parse_mode=ParseMode.HTML,
+            )
+            confirm_msg = f"Заявка {app_id} закрыта (документ отправлен)."
+            
+        else:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=msg_user,
+                parse_mode=ParseMode.HTML,
+            )
+            confirm_msg = f"Заявка {app_id} закрыта."
+
         if additional_text:
             confirm_msg += " Решение записано из команды."
-        else:
+        elif not file_id:
             confirm_msg += " В решение записано последнее сообщение из чата."
+            
         await update.message.reply_text(confirm_msg)
+        
     except Exception as e:
         logger.error(f"Ошибка finish_command: {e}")
-        await update.message.reply_text("Заявка закрыта, но уведомление не отправлено.")
+        await update.message.reply_text("Заявка закрыта, но возникла ошибка при отправке уведомления пользователю.")
 
 
 async def whisper_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1390,15 +1460,22 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 async def handle_unknown_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    warning_text = (
-        "⛔ <b>Отправка невозможна.</b>\n\n"
-        "Для того, чтобы отправить заявку или работать с уже отправленными заявками, "
-        "<b>нажмите соответствующие кнопки на интерактивной панели</b>.\n\n"
-        "Если она у вас свернута, в правом нижнем углу нажмите на квадрат с 4-мя кружками (или значок клавиатуры). "
-        "Данная кнопка находится слева от значка микрофона для записи голосовых сообщений."
-    )
+    user_id = update.effective_user.id
+    chat_type = update.effective_chat.type
 
-    await update.message.reply_text(warning_text, parse_mode=ParseMode.HTML)
+    if user_id in NOTIFY_CHAT_IDS:
+        return
+
+    if chat_type in ["group", "supergroup"]:
+        return
+
+    await update.message.reply_text(
+        "⚠️ <b>Я не понимаю это сообщение.</b>\n\n"
+        "Пожалуйста, используйте кнопки меню для работы с ботом.\n"
+        "Если меню пропало, отправьте команду <i>/start</i>",
+        parse_mode=ParseMode.HTML,
+        reply_markup=MAIN_KEYBOARD
+    )
 
 
 async def request_password_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1466,14 +1543,6 @@ async def conv_password_receive(update: Update, context: ContextTypes.DEFAULT_TY
         )
     return ConversationHandler.END
 
-async def handle_unknown_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "⚠️ <b>Я не понимаю это сообщение.</b>\n\n"
-        "Пожалуйста, используйте кнопки меню для работы с ботом.\n"
-        "Если меню пропало, отправьте команду /start",
-        parse_mode=ParseMode.HTML,
-        reply_markup=MAIN_KEYBOARD
-    )
 
 def main():
     my_persistence = PicklePersistence(filepath='bot_data.pickle')
@@ -1491,6 +1560,8 @@ def main():
             MessageHandler(
                 filters.Text("Проверить статус заявки"), conv_ask_check_status
             ),
+            MessageHandler(filters.Text("📚 Инструкция"), send_instruction), 
+            
             CallbackQueryHandler(reply_to_admin_callback, pattern="^reply_admin:"),
         ],
         states={
@@ -1567,6 +1638,9 @@ def main():
         fallbacks=[
             CommandHandler("cancel", cancel),
             MessageHandler(filters.Text(BTN_CANCEL), cancel),
+
+            CommandHandler("start", conv_ask_name),
+            MessageHandler(filters.Text("Start"), conv_ask_name),
         ],
     )
 
