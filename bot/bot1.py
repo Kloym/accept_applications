@@ -26,7 +26,7 @@ from telegram.ext import (
     filters,
     CallbackQueryHandler,
     ConversationHandler,
-    PicklePersistence
+    PicklePersistence,
 )
 from dotenv import load_dotenv
 import os
@@ -68,6 +68,10 @@ class States(Enum):
     RETURN_WAIT_REASON = 31
     PASSWORD_REQUEST_WAIT_PASSWORD = 40
     REPLY_WAIT_TEXT = 60
+    EDIT_CHOICE = 100
+    EDIT_WAIT_NAME = 101
+    EDIT_WAIT_IP = 102
+    EDIT_WAIT_DETAILS = 103
 
 
 class ApiService:
@@ -144,11 +148,11 @@ class DbService:
             "SELECT chat_id, name FROM applications WHERE application_id = ?", (app_id,)
         )
         row = cursor.fetchone()
-        
+
         if not row:
             conn.close()
             return None
-            
+
         chat_id, name = row["chat_id"], row["name"]
         archived_at = datetime.now().strftime("%Y-%m-%d %H:%M")
 
@@ -176,7 +180,7 @@ class DbService:
             """
             params = (archived_at, done_by, app_id, app_id)
             cursor.execute(query, params)
-            
+
         conn.commit()
         conn.close()
         return chat_id, name
@@ -190,7 +194,7 @@ class DbService:
         row = cursor.fetchone()
         conn.close()
         return (row["chat_id"], row["name"]) if row else None
-    
+
     def get_all_chat_ids(self):
         conn = self._get_db()
         cursor = conn.cursor()
@@ -267,15 +271,16 @@ api_client = ApiService(BASE_SERVER_URL)
 db_service = DbService(DB_FILE)
 
 BTN_CANCEL = "❌ Отменить действие"
+BTN_BACK = "⬅️ Вернуться к предыдущему шагу"
 
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
     [
-        [KeyboardButton("Start")],
-        [KeyboardButton("Добавить фото")],
-        [KeyboardButton("Дополнить заявку")],
-        [KeyboardButton("Проверить статус заявки")],
-        [KeyboardButton("Вернуть заявку в работу")],
-        [KeyboardButton("📚 Инструкция")],
+        [KeyboardButton("Старт"), KeyboardButton("📚 Инструкция")],
+        [
+            KeyboardButton("Проверить статус заявки"),
+            KeyboardButton("Вернуть заявку в работу"),
+        ],
+        [KeyboardButton("Добавить фото"), KeyboardButton("Дополнить заявку")],
     ],
     resize_keyboard=True,
 )
@@ -285,7 +290,7 @@ CANCEL_KEYBOARD = ReplyKeyboardMarkup(
 )
 
 DONE_KEYBOARD = ReplyKeyboardMarkup(
-    [[KeyboardButton("✔️ Done"), KeyboardButton("❌ Отменить все")]],
+    [[KeyboardButton("✔️ Готово"), KeyboardButton("❌ Отменить все")]],
     resize_keyboard=True,
     is_persistent=True,
 )
@@ -325,17 +330,18 @@ def get_departments_inline_keyboard(page=0, filter_letter=None, saved_dep=None):
         depatments = filter_departments_by_letter(DEPARTMENTS, filter_letter)
     else:
         depatments = DEPARTMENTS
-    
+
     start = page * DEPARTMENTS_PER_PAGE
     end = start + DEPARTMENTS_PER_PAGE
     departments_page = depatments[start:end]
-    
 
-    keyboard.extend([
-        [InlineKeyboardButton(dep, callback_data=f"dep_idx:{i}")]
-        for i, dep in enumerate(departments_page, start=start)
-    ])
-    
+    keyboard.extend(
+        [
+            [InlineKeyboardButton(dep, callback_data=f"dep_idx:{i}")]
+            for i, dep in enumerate(departments_page, start=start)
+        ]
+    )
+
     nav = []
     if page > 0:
         nav.append(InlineKeyboardButton("⬅️ Назад", callback_data=f"dep_page:{page-1}"))
@@ -343,7 +349,7 @@ def get_departments_inline_keyboard(page=0, filter_letter=None, saved_dep=None):
         nav.append(InlineKeyboardButton("➡️ Далее", callback_data=f"dep_page:{page+1}"))
     if nav:
         keyboard.append(nav)
-        
+
     used_letters = sorted(set(dep[0].upper() for dep in DEPARTMENTS))
     letters_per_row = 7
     letter_buttons = [
@@ -356,9 +362,9 @@ def get_departments_inline_keyboard(page=0, filter_letter=None, saved_dep=None):
     ]
     keyboard.extend(letter_rows)
     keyboard.append([InlineKeyboardButton("Все", callback_data="dep_letter:all")])
-    
+
     keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel_action")])
-    
+
     return InlineKeyboardMarkup(keyboard)
 
 
@@ -367,14 +373,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<b>Что умеет этот бот?</b>\n\n"
         "Этот бот предназначен для быстрой и удобной подачи заявок в техническую поддержку КИС ЕМИАС.\n\n"
         "<b>Возможности:</b>\n"
-        "📋 <b>Start</b> - Оформление новой заявки.\n"
+        "📋 <b>Старт</b> - Оформление новой заявки.\n"
         "📸 <b>Добавить фото</b> - Добавление фотографий к существующей заявке.\n"
         "📝 <b>Дополнить заявку</b> - Добавление текста к существующей заявке.\n"
         "📊 <b>Проверить статус заявки</b> - Просмотр статуса ваших активных заявок.\n"
         "✅ Уведомление о выполнении вашей заявки.\n"
         "♻️ <b>Вернуть заявку в работу</b> - Если проблема не решена.\n\n"
         "<b>Как пользоваться:</b>\n"
-        "1. Нажмите кнопку <b>Start</b> для создания новой заявки.\n"
+        "1. Нажмите кнопку <b>Старт</b> для создания новой заявки.\n"
         "2. Следуйте инструкциям бота: введите ФИО, IP-адрес, выберите отделение и опишите проблему.\n"
         "3. При необходимости прикрепите фото.\n"
         "4. После отправки заявки вы получите уникальный ID. При нажатии на ID вы удобно можете его скопировать.\n\n"
@@ -386,12 +392,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return ConversationHandler.END
 
+
 async def send_instruction(update: Update, context: ContextTypes.DEFAULT_TYPE):
     filename = "manual.docx"
 
     current_dir = os.path.dirname(os.path.abspath(__file__))
     file_path = os.path.join(current_dir, filename)
-    
+
     if not os.path.exists(file_path):
         await update.message.reply_text("Файл инструкции временно недоступен.")
         logger.error(f"Файл не найден по пути: {file_path}")
@@ -402,27 +409,30 @@ async def send_instruction(update: Update, context: ContextTypes.DEFAULT_TYPE):
             document=open(file_path, "rb"),
             caption="📄 <b>Инструкция по использованию бота</b>",
             parse_mode=ParseMode.HTML,
-            filename="Инструкция_по_использованию_бота.docx"
+            filename="Инструкция_по_использованию_бота.docx",
         )
     except Exception as e:
         logger.error(f"Ошибка при отправке инструкции: {e}")
         await update.message.reply_text("Произошла ошибка при отправке файла.")
-        
+
     return ConversationHandler.END
+
 
 async def finish_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args
     if not args or len(args[0]) != 8:
-        await update.message.reply_text("Укажите id заявки, например: /q 1234abcd [решение]")
+        await update.message.reply_text(
+            "Укажите id заявки, например: /q 1234abcd [решение]"
+        )
         return
-    
+
     app_id = args[0]
     additional_text = " ".join(args[1:]) if len(args) > 1 else None
 
     file_id = None
     file_type = None
     reply_message = update.message.reply_to_message
-    
+
     if reply_message:
         if reply_message.photo:
             file_id = reply_message.photo[-1].file_id
@@ -443,21 +453,20 @@ async def finish_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db_solution = "[Отправлено фото решения]"
 
     result = await asyncio.to_thread(
-        db_service.mark_application_done, 
-        app_id, 
-        done_by, 
-        db_solution
+        db_service.mark_application_done, app_id, done_by, db_solution
     )
-    
+
     if not result:
         await update.message.reply_text(f"Заявка {app_id} не найдена")
         return
-        
+
     chat_id, name = result
-    
+
     msg_user = f"{name.title()}, ваша заявка <code>{app_id}</code> выполнена!"
     if additional_text:
-        msg_user += f"\n\n<b>Дополнительное сообщение:</b>\n{additional_text.capitalize()}"
+        msg_user += (
+            f"\n\n<b>Дополнительное сообщение:</b>\n{additional_text.capitalize()}"
+        )
 
     try:
         if file_type == "photo":
@@ -468,7 +477,7 @@ async def finish_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode=ParseMode.HTML,
             )
             confirm_msg = f"Заявка {app_id} закрыта (фото отправлено)."
-            
+
         elif file_type == "document":
             await context.bot.send_document(
                 chat_id=chat_id,
@@ -477,7 +486,7 @@ async def finish_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode=ParseMode.HTML,
             )
             confirm_msg = f"Заявка {app_id} закрыта (документ отправлен)."
-            
+
         else:
             await context.bot.send_message(
                 chat_id=chat_id,
@@ -490,12 +499,14 @@ async def finish_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             confirm_msg += " Решение записано из команды."
         elif not file_id:
             confirm_msg += " В решение записано последнее сообщение из чата."
-            
+
         await update.message.reply_text(confirm_msg)
-        
+
     except Exception as e:
         logger.error(f"Ошибка finish_command: {e}")
-        await update.message.reply_text("Заявка закрыта, но возникла ошибка при отправке уведомления пользователю.")
+        await update.message.reply_text(
+            "Заявка закрыта, но возникла ошибка при отправке уведомления пользователю."
+        )
 
 
 async def whisper_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -608,6 +619,7 @@ async def restore_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         await update.message.reply_text("Ошибка при уведомлении.")
 
+
 async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id not in NOTIFY_CHAT_IDS:
@@ -615,21 +627,23 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     message_to_send = " ".join(context.args)
-    
+
     if not message_to_send:
         await update.message.reply_text(
             "⚠️ Введите текст рассылки.\nПример: <code>/broadcast Внимание! Технические работы.</code>",
-            parse_mode=ParseMode.HTML
+            parse_mode=ParseMode.HTML,
         )
         return
 
     chat_ids = await asyncio.to_thread(db_service.get_all_chat_ids)
-    
+
     if not chat_ids:
         await update.message.reply_text("В базе нет пользователей для рассылки.")
         return
 
-    await update.message.reply_text(f"🚀 Начинаю рассылку для {len(chat_ids)} пользователей...")
+    await update.message.reply_text(
+        f"🚀 Начинаю рассылку для {len(chat_ids)} пользователей..."
+    )
 
     success_count = 0
     block_count = 0
@@ -640,11 +654,11 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(
                 chat_id=chat_id,
                 text=f"📢 <b>ОБЪЯВЛЕНИЕ</b>\n\n{message_to_send.capitalize()}",
-                parse_mode=ParseMode.HTML
+                parse_mode=ParseMode.HTML,
             )
             success_count += 1
-            await asyncio.sleep(0.05) 
-            
+            await asyncio.sleep(0.05)
+
         except Forbidden:
             block_count += 1
         except Exception as e:
@@ -656,8 +670,128 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Успешно: {success_count}\n"
         f"Заблокировали бота: {block_count}\n"
         f"Ошибки: {error_count}",
-        parse_mode=ParseMode.HTML
+        parse_mode=ParseMode.HTML,
     )
+
+
+async def conv_back_to_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Возврат к вводу имени."""
+    saved_name = context.user_data.get("saved_name")
+
+    text = '<b>👋 Введите ФИО:</b>\n\n(Или нажмите кнопку "Отменить действие")'
+    buttons = [[KeyboardButton(BTN_CANCEL)]]
+
+    if saved_name:
+        text += f"\n\nРанее вы вводили: <b>{saved_name}</b>"
+        buttons.insert(0, [KeyboardButton(saved_name)])
+
+    await update.message.reply_text(
+        text,
+        parse_mode=ParseMode.HTML,
+        reply_markup=ReplyKeyboardMarkup(
+            buttons, resize_keyboard=True, one_time_keyboard=True
+        ),
+    )
+    return States.START_WAIT_NAME
+
+
+async def conv_back_to_ip(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Возврат к вводу IP."""
+    saved_ip = context.user_data.get("saved_ip")
+    text = "<b>🌐 Введите IP адрес компьютера:</b>"
+
+    buttons = [[KeyboardButton(BTN_BACK), KeyboardButton(BTN_CANCEL)]]
+
+    if saved_ip:
+        text += f"\n\nРанее вы вводили: <b>{saved_ip}</b>"
+        buttons.insert(0, [KeyboardButton(saved_ip)])
+
+    await update.message.reply_text(
+        text,
+        parse_mode=ParseMode.HTML,
+        reply_markup=ReplyKeyboardMarkup(
+            buttons, resize_keyboard=True, one_time_keyboard=True
+        ),
+    )
+    return States.START_WAIT_IP
+
+
+async def conv_back_to_department_bridge(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+):
+    """Возврат к кнопке выбора отделения."""
+    bridge_keyboard = ReplyKeyboardMarkup(
+        [
+            [KeyboardButton("📂 Выбрать отделение")],
+            [KeyboardButton(BTN_BACK), KeyboardButton(BTN_CANCEL)],
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
+    await update.message.reply_text(
+        "Вернулись к выбору отделения.\nНажмите кнопку ниже, чтобы открыть список.",
+        reply_markup=bridge_keyboard,
+    )
+    return States.START_WAIT_DEPARTMENT
+
+
+async def conv_back_to_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Возврат к вводу описания проблемы."""
+    prev_details = context.user_data.get("details", "")
+    text = "<b>✍️ Опишите проблему:</b>"
+    if prev_details:
+        text += f"\n\nБыло введено: {prev_details}"
+
+    await update.message.reply_text(
+        text,
+        parse_mode=ParseMode.HTML,
+        reply_markup=ReplyKeyboardMarkup(
+            [[KeyboardButton(BTN_BACK), KeyboardButton(BTN_CANCEL)]],
+            resize_keyboard=True,
+        ),
+    )
+    return States.START_WAIT_DETAILS
+
+
+async def conv_back_to_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Возврат к добавлению фото."""
+
+    query = update.callback_query
+
+    photo_kb = ReplyKeyboardMarkup(
+        [
+            [KeyboardButton("✔️ Готово"), KeyboardButton(BTN_BACK)],
+            [KeyboardButton("❌ Отменить все")],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+    )
+
+    text = (
+        f"<b>🖼️ Вы вернулись к фото.</b>\n"
+        f"Загружено файлов: {len(context.user_data.get('attachments', []))}.\n"
+        "Отправьте еще или нажмите <b>Готово</b>."
+    )
+
+    if query:
+        await query.answer()
+        await query.delete_message()
+
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=text,
+            reply_markup=photo_kb,
+            parse_mode=ParseMode.HTML,
+        )
+
+    else:
+        await update.message.reply_text(
+            text,
+            reply_markup=photo_kb,
+            parse_mode=ParseMode.HTML,
+        )
+
+    return States.START_WAIT_PHOTOS
 
 
 async def conv_ask_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -705,7 +839,7 @@ async def conv_ask_ip(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     saved_ip = context.user_data.get("saved_ip")
     text = "<b>🌐 Теперь введите IP адрес компьютера:</b>"
-    buttons = [[KeyboardButton(BTN_CANCEL)]]
+    buttons = [[KeyboardButton(BTN_BACK), KeyboardButton(BTN_CANCEL)]]
 
     if saved_ip:
         text += f"\n\nРанее вы вводили: <b>{saved_ip}</b>"
@@ -736,29 +870,32 @@ async def conv_ask_department(update: Update, context: ContextTypes.DEFAULT_TYPE
     context.user_data["dep_page"] = 0
 
     bridge_keyboard = ReplyKeyboardMarkup(
-        [[KeyboardButton("📂 Выбрать отделение")], [KeyboardButton(BTN_CANCEL)]],
+        [
+            [KeyboardButton("📂 Выбрать отделение")],
+            [KeyboardButton(BTN_BACK), KeyboardButton(BTN_CANCEL)],
+        ],
         resize_keyboard=True,
-        one_time_keyboard=True
+        one_time_keyboard=True,
     )
-
 
     msg = await update.message.reply_text(
         "IP принят ✔️\nНажмите кнопку ниже, чтобы открыть список.",
-        reply_markup=bridge_keyboard
+        reply_markup=bridge_keyboard,
     )
-    
+
     context.user_data["msg_to_delete"] = msg.message_id
 
-    
     return States.START_WAIT_DEPARTMENT
 
 
-async def conv_show_departments_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def conv_show_departments_list(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+):
     if "msg_to_delete" in context.user_data:
         try:
             await context.bot.delete_message(
-                chat_id=update.effective_chat.id, 
-                message_id=context.user_data["msg_to_delete"]
+                chat_id=update.effective_chat.id,
+                message_id=context.user_data["msg_to_delete"],
             )
         except Exception:
             pass
@@ -770,8 +907,7 @@ async def conv_show_departments_list(update: Update, context: ContextTypes.DEFAU
         pass
 
     waiting_msg = await update.message.reply_text(
-        "Загрузка списка...", 
-        reply_markup=ReplyKeyboardRemove()
+        "Загрузка списка...", reply_markup=ReplyKeyboardRemove()
     )
 
     saved_dep = context.user_data.get("saved_department")
@@ -781,9 +917,11 @@ async def conv_show_departments_list(update: Update, context: ContextTypes.DEFAU
         reply_markup=get_departments_inline_keyboard(0, saved_dep=saved_dep),
         parse_mode=ParseMode.HTML,
     )
-    
+
     try:
-        await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=waiting_msg.message_id)
+        await context.bot.delete_message(
+            chat_id=update.effective_chat.id, message_id=waiting_msg.message_id
+        )
     except:
         pass
 
@@ -808,11 +946,17 @@ async def department_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         if saved_dep:
             context.user_data["department"] = saved_dep
             await query.edit_message_text(f"Вы выбрали: {saved_dep} (из сохраненных)")
+
+            details_kb = ReplyKeyboardMarkup(
+                [[KeyboardButton(BTN_BACK), KeyboardButton(BTN_CANCEL)]],
+                resize_keyboard=True,
+            )
+
             await context.bot.send_message(
                 chat_id=update.effective_user.id,
                 text="<b>✍️ Опишите проблему:</b>",
                 parse_mode=ParseMode.HTML,
-                reply_markup=CANCEL_KEYBOARD,
+                reply_markup=details_kb,
             )
             return States.START_WAIT_DETAILS
         else:
@@ -821,11 +965,11 @@ async def department_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     if data.startswith("dep_page:") or data.startswith("dep_letter:"):
         await query.answer()
-        
+
         if data.startswith("dep_page:"):
             page = int(data.split(":")[1])
             context.user_data["dep_page"] = page
-        
+
         elif data.startswith("dep_letter:"):
             letter = data.split(":", 1)[1]
             if letter == "all":
@@ -837,14 +981,14 @@ async def department_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         try:
             await query.edit_message_reply_markup(
                 reply_markup=get_departments_inline_keyboard(
-                    context.user_data.get("dep_page", 0), 
-                    context.user_data.get("dep_filter"), 
-                    saved_dep
+                    context.user_data.get("dep_page", 0),
+                    context.user_data.get("dep_filter"),
+                    saved_dep,
                 )
             )
         except BadRequest:
             pass
-            
+
         return States.START_WAIT_DEPARTMENT
 
     if data.startswith("dep_idx:"):
@@ -852,14 +996,24 @@ async def department_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         idx = int(data.split(":", 1)[1])
         dep = departments[idx]
         context.user_data["department"] = dep
+        if context.user_data.get("editing_mode"):
+            await query.delete_message()
+            return await conv_show_confirmation(update, context)
+
         context.user_data["saved_department"] = dep
 
         await query.edit_message_text(f"Вы выбрали: {dep}")
+
+        details_kb = ReplyKeyboardMarkup(
+            [[KeyboardButton(BTN_BACK), KeyboardButton(BTN_CANCEL)]],
+            resize_keyboard=True,
+        )
+
         await context.bot.send_message(
             chat_id=update.effective_user.id,
             text="<b>✍️ Опишите проблему:</b>",
             parse_mode=ParseMode.HTML,
-            reply_markup=CANCEL_KEYBOARD,
+            reply_markup=details_kb,
         )
         return States.START_WAIT_DETAILS
 
@@ -867,10 +1021,20 @@ async def department_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def conv_ask_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["details"] = update.message.text.strip()
     context.user_data["photos"] = []
+
+    photo_kb = ReplyKeyboardMarkup(
+        [
+            [KeyboardButton("✔️ Готово"), KeyboardButton(BTN_BACK)],
+            [KeyboardButton("❌ Отменить все")],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+    )
+
     await update.message.reply_text(
         "<b>🖼️ Если хотите добавить скриншот(фото) ошибки, отправьте их сейчас.</b>\n"
-        "Можно отправить несколько. Когда всё готово, нажмите <b>Done</b>.",
-        reply_markup=DONE_KEYBOARD,
+        "Можно отправить несколько. Когда всё готово, нажмите <b>Готово</b>.",
+        reply_markup=photo_kb,
         parse_mode=ParseMode.HTML,
     )
     return States.START_WAIT_PHOTOS
@@ -878,6 +1042,15 @@ async def conv_ask_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def conv_add_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     file_data = {"b64": None, "extension": "jpg"}
+
+    photo_kb = ReplyKeyboardMarkup(
+        [
+            [KeyboardButton("✔️ Готово"), KeyboardButton(BTN_BACK)],
+            [KeyboardButton("❌ Отменить все")],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+    )
 
     try:
         file_obj = None
@@ -895,7 +1068,10 @@ async def conv_add_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 file_data["extension"] = "bin"
 
         else:
-            await update.message.reply_text("Пожалуйста, пришлите фото или файл (Word/Excel).", reply_markup=DONE_KEYBOARD)
+            await update.message.reply_text(
+                "Пожалуйста, пришлите фото или файл (Word/Excel).",
+                reply_markup=photo_kb,
+            )
             return States.START_WAIT_PHOTOS
 
         if file_obj:
@@ -904,7 +1080,7 @@ async def conv_add_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if "attachments" not in context.user_data:
             context.user_data["attachments"] = []
-        
+
         context.user_data["attachments"].append(file_data)
 
         await update.message.reply_text(
@@ -922,16 +1098,154 @@ async def conv_add_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def conv_show_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     d = context.user_data
-    files_count = len(d.get('attachments', []))
-    
+    files_count = len(d.get("attachments", []))
+    chat_id = update.effective_chat.id
+
+    context.user_data.pop("editing_mode", None)
+    processing_msg = None
+    try:
+        processing_msg = await context.bot.send_message(
+            chat_id=chat_id, text="⏳", reply_markup=ReplyKeyboardRemove()
+        )
+    except Exception as e:
+        logger.error(f"Не удалось отправить сообщение удаления клавиатуры: {e}")
+
     summary = (
-        f"<b>Проверьте данные:</b>\n\n<b>ФИО:</b> {d.get('name')}\n<b>IP:</b> {d.get('ip_address')}\n"
-        f"<b>Отделение:</b> {d.get('department')}\n<b>Описание:</b> {d.get('details')}\n<b>Вложений:</b> {files_count} шт.\n\nВсё верно?"
+        f"<b>Проверьте данные:</b>\n\n"
+        f"👤 <b>ФИО:</b> {d.get('name')}\n"
+        f"🌐 <b>IP:</b> {d.get('ip_address')}\n"
+        f"🏥 <b>Отделение:</b> {d.get('department')}\n"
+        f"📝 <b>Описание:</b> {d.get('details')}\n"
+        f"📎 <b>Вложений:</b> {files_count} шт.\n\n"
+        f"Всё верно?"
     )
-    await update.message.reply_text(
-        summary, parse_mode=ParseMode.HTML, reply_markup=CONFIRM_KEYBOARD
+
+    confirm_keyboard = InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("✅ Отправить", callback_data="confirm_send")],
+            [
+                InlineKeyboardButton("✏️ ФИО", callback_data="edit:name"),
+                InlineKeyboardButton("✏️ IP", callback_data="edit:ip"),
+            ],
+            [
+                InlineKeyboardButton("✏️ Отделение", callback_data="edit:dep"),
+                InlineKeyboardButton("✏️ Описание", callback_data="edit:details"),
+            ],
+            [
+                InlineKeyboardButton("⬅️ Назад к фото", callback_data="confirm_back"),
+                InlineKeyboardButton("❌ Отменить всё", callback_data="confirm_cancel"),
+            ],
+        ]
     )
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text=summary,
+        parse_mode=ParseMode.HTML,
+        reply_markup=confirm_keyboard,
+    )
+    if processing_msg:
+        try:
+            await context.bot.delete_message(
+                chat_id=chat_id, message_id=processing_msg.message_id
+            )
+        except Exception:
+            pass
+
     return States.START_CONFIRMATION
+
+
+async def conv_edit_choice_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает нажатие кнопок '✏️ Изменить ...'"""
+    query = update.callback_query
+    await query.answer()
+    data = query.data.split(":")[1]
+
+    cancel_edit_kb = ReplyKeyboardMarkup(
+        [[KeyboardButton("🔙 Вернуться без изменений")]],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
+
+    if data == "name":
+        await query.edit_message_text(
+            f"Текущее ФИО: {context.user_data.get('name')}\n<b>Введите новое ФИО:</b>",
+            parse_mode=ParseMode.HTML,
+        )
+        await context.bot.send_message(
+            update.effective_chat.id, "⌨️", reply_markup=cancel_edit_kb
+        )
+        return States.EDIT_WAIT_NAME
+
+    elif data == "ip":
+        await query.edit_message_text(
+            f"Текущий IP: {context.user_data.get('ip_address')}\n<b>Введите новый IP:</b>",
+            parse_mode=ParseMode.HTML,
+        )
+        await context.bot.send_message(
+            update.effective_chat.id, "⌨️", reply_markup=cancel_edit_kb
+        )
+        return States.EDIT_WAIT_IP
+
+    elif data == "details":
+        await query.edit_message_text(
+            f"Текущее описание: {context.user_data.get('details')}\n<b>Введите новое описание:</b>",
+            parse_mode=ParseMode.HTML,
+        )
+        await context.bot.send_message(
+            update.effective_chat.id, "⌨️", reply_markup=cancel_edit_kb
+        )
+        return States.EDIT_WAIT_DETAILS
+
+    elif data == "dep":
+        context.user_data["editing_mode"] = True
+        context.user_data["dep_page"] = 0
+        await query.delete_message()
+        await context.bot.send_message(
+            update.effective_chat.id,
+            "<b>🗂️ Выберите новое отделение:</b>",
+            reply_markup=get_departments_inline_keyboard(0),
+            parse_mode=ParseMode.HTML,
+        )
+        return States.START_WAIT_DEPARTMENT
+
+
+async def conv_save_edited_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    if text == "🔙 Вернуться без изменений":
+        return await conv_show_confirmation(update, context)
+
+    if not is_valid_fio(text):
+        await update.message.reply_text(
+            "Пожалуйста, введите корректное ФИО (минимум 2 слова)."
+        )
+        return States.EDIT_WAIT_NAME
+
+    context.user_data["name"] = text
+    return await conv_show_confirmation(update, context)
+
+
+async def conv_save_edited_ip(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    if text == "🔙 Вернуться без изменений":
+        return await conv_show_confirmation(update, context)
+
+    if not is_valid_ip(text):
+        await update.message.reply_text(
+            "Неверный формат IP (123.123.123.123). Попробуйте снова."
+        )
+        return States.EDIT_WAIT_IP
+
+    context.user_data["ip_address"] = text
+    return await conv_show_confirmation(update, context)
+
+
+async def conv_save_edited_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    if text == "🔙 Вернуться без изменений":
+        return await conv_show_confirmation(update, context)
+
+    context.user_data["details"] = text
+    return await conv_show_confirmation(update, context)
 
 
 async def conv_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -956,7 +1270,7 @@ async def conv_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
 
     success = await api_client.post_new_application(data)
-    
+
     msg_admin = (
         f"🔔 <b>Новая заявка!</b> 🔔\n\n"
         f"<b>ID:</b> <code>{app_id}</code>\n"
@@ -971,9 +1285,12 @@ async def conv_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data.clear()
 
-    if saved_name: context.user_data["saved_name"] = saved_name
-    if saved_ip: context.user_data["saved_ip"] = saved_ip
-    if saved_dep: context.user_data["saved_department"] = saved_dep
+    if saved_name:
+        context.user_data["saved_name"] = saved_name
+    if saved_ip:
+        context.user_data["saved_ip"] = saved_ip
+    if saved_dep:
+        context.user_data["saved_department"] = saved_dep
 
     chat_id = update.effective_user.id
 
@@ -984,11 +1301,11 @@ async def conv_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=MAIN_KEYBOARD,
         )
         return ConversationHandler.END
-        
+
     final_text = (
         f"<b>✅ Ваша заявка принята в работу!</b>\n"
         f"Уникальный идентификатор заявки: <code>{app_id}</code>\n\n"
-        "Чтобы подать новую заявку, нажмите Start."
+        "Чтобы подать новую заявку, нажмите Старт."
     )
 
     await context.bot.send_message(
@@ -1048,7 +1365,7 @@ async def conv_update_id_callback(update: Update, context: ContextTypes.DEFAULT_
     await context.bot.send_message(
         update.effective_chat.id,
         f"📸 <b>Отправьте фото для добавления к заявке <code>{app_id}</code>.</b>\n"
-            "Вы можете отправить несколько. Когда закончите, нажмите Done.",
+        "Вы можете отправить несколько. Когда закончите, нажмите Готово.",
         reply_markup=DONE_KEYBOARD,
         parse_mode=ParseMode.HTML,
     )
@@ -1072,7 +1389,9 @@ async def conv_ask_update_photo(update: Update, context: ContextTypes.DEFAULT_TY
     return States.UPDATE_WAIT_PHOTO
 
 
-async def conv_process_update_photo_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def conv_process_update_photo_add(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+):
     file_data = {"b64": None, "extension": "jpg"}
     try:
         file_obj = None
@@ -1087,17 +1406,19 @@ async def conv_process_update_photo_add(update: Update, context: ContextTypes.DE
             else:
                 file_data["extension"] = "bin"
         else:
-             await update.message.reply_text("Это не фото и не файл.", reply_markup=DONE_KEYBOARD)
-             return States.UPDATE_WAIT_PHOTO
+            await update.message.reply_text(
+                "Это не фото и не файл.", reply_markup=DONE_KEYBOARD
+            )
+            return States.UPDATE_WAIT_PHOTO
 
         if file_obj:
             downloaded_bytes = await file_obj.download_as_bytearray()
             file_data["b64"] = base64.b64encode(downloaded_bytes).decode("utf-8")
-            
+
             if "update_attachments" not in context.user_data:
                 context.user_data["update_attachments"] = []
             context.user_data["update_attachments"].append(file_data)
-            
+
             await update.message.reply_text(
                 f"Файл {len(context.user_data['update_attachments'])} добавлен.",
                 reply_markup=DONE_KEYBOARD,
@@ -1108,10 +1429,12 @@ async def conv_process_update_photo_add(update: Update, context: ContextTypes.DE
     return States.UPDATE_WAIT_PHOTO
 
 
-async def conv_process_update_photo_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def conv_process_update_photo_done(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+):
     app_id = context.user_data.get("update_id")
     attachments = context.user_data.get("update_attachments", [])
-    
+
     if not attachments:
         await update.message.reply_text(
             "Файлы не были отправлены.", reply_markup=MAIN_KEYBOARD
@@ -1120,7 +1443,9 @@ async def conv_process_update_photo_done(update: Update, context: ContextTypes.D
         return ConversationHandler.END
 
     await update.message.reply_text("Загрузка...", reply_markup=MAIN_KEYBOARD)
-    if await api_client.update_photos(app_id, update.effective_user.username, attachments):
+    if await api_client.update_photos(
+        app_id, update.effective_user.username, attachments
+    ):
         await update.message.reply_text("✅ Файлы добавлены!")
     else:
         await update.message.reply_text("❌ Ошибка (заявка не найдена).")
@@ -1200,7 +1525,7 @@ async def conv_process_append_text(update: Update, context: ContextTypes.DEFAULT
         await update.message.reply_text(
             f"<b>✅ Текст успешно добавлен к заявке <code>{app_id}</code>!</b>",
             parse_mode=ParseMode.HTML,
-            reply_markup=MAIN_KEYBOARD
+            reply_markup=MAIN_KEYBOARD,
         )
     else:
         await update.message.reply_text(
@@ -1260,34 +1585,42 @@ async def check_status_callback(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query
     data = query.data
     await query.answer()
-    
+
     if data.startswith("check_status:"):
         app_id = data.split(":", 1)[1]
-        
-        result = await asyncio.to_thread(db_service.get_app_status_for_user, app_id, query.from_user.id)
-        
-        back_btn = InlineKeyboardMarkup([
-            [InlineKeyboardButton("⬅️ Назад к списку", callback_data="back_to_active_list")]
-        ])
-        
+
+        result = await asyncio.to_thread(
+            db_service.get_app_status_for_user, app_id, query.from_user.id
+        )
+
+        back_btn = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        "⬅️ Назад к списку", callback_data="back_to_active_list"
+                    )
+                ]
+            ]
+        )
+
         if not result:
             await query.edit_message_text("Заявка не найдена.", reply_markup=back_btn)
             return
 
         status, details, difficulty, name, department = result
-        
+
         MAX_LEN = 200
         details_show = details[:MAX_LEN] + "..." if len(details) > MAX_LEN else details
-        
-        time_estimates = {
-            'low': '1 день',
-            'medium': '3-5 дней',
-            'high': '7 и более дней',
-            'naumen': 'Передано разработчикам'
-        }
-        est_time = time_estimates.get(difficulty, '1 день')
 
-        if status == 'done':
+        time_estimates = {
+            "low": "1 день",
+            "medium": "3-5 дней",
+            "high": "7 и более дней",
+            "naumen": "Передано разработчикам",
+        }
+        est_time = time_estimates.get(difficulty, "1 день")
+
+        if status == "done":
             text = (
                 f"<b>Заявка:</b> <code>{app_id}</code>\n"
                 f"<b>Статус:</b> ✅ Выполнена\n\n"
@@ -1303,11 +1636,9 @@ async def check_status_callback(update: Update, context: ContextTypes.DEFAULT_TY
                 f"━━━━━━━━━━━━━━━━\n"
                 f"📝 <b>Описание:</b>\n<i>{details_show}</i>"
             )
-        
+
         await query.edit_message_text(
-            text=text, 
-            parse_mode=ParseMode.HTML, 
-            reply_markup=back_btn
+            text=text, parse_mode=ParseMode.HTML, reply_markup=back_btn
         )
 
 
@@ -1347,17 +1678,18 @@ async def conv_ask_return_reason(update: Update, context: ContextTypes.DEFAULT_T
     return States.RETURN_WAIT_REASON
 
 
-async def conv_process_return_reason(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def conv_process_return_reason(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+):
     reason = update.message.text.strip()
-    app_id = context.user_data.get('return_id')
+    app_id = context.user_data.get("return_id")
     username = update.effective_user.username or f"user_{update.effective_user.id}"
     user_info = await asyncio.to_thread(db_service.get_user_info_for_app, app_id)
-    
+
     if user_info:
         _, name_from_db = user_info
     else:
         name_from_db = "Неизвестно"
-
 
     msg_admin = (
         f"⚠️ <b>Запрос на возврат!</b> ⚠️\n\n"
@@ -1369,18 +1701,20 @@ async def conv_process_return_reason(update: Update, context: ContextTypes.DEFAU
     )
 
     for chat_id in NOTIFY_CHAT_IDS:
-        try: 
-            await context.bot.send_message(chat_id, msg_admin, parse_mode=ParseMode.HTML)
-        except: 
+        try:
+            await context.bot.send_message(
+                chat_id, msg_admin, parse_mode=ParseMode.HTML
+            )
+        except:
             pass
-    
+
     await update.message.reply_text(
         f"✅ <b>Ваш запрос на возврат заявки <code>{app_id}</code> отправлен специалистам.</b>\n\n"
-        f"Они рассмотрят причину и, при необходимости, вернут заявку в работу. Вы получите отдельное уведомление.", 
+        f"Они рассмотрят причину и, при необходимости, вернут заявку в работу. Вы получите отдельное уведомление.",
         parse_mode=ParseMode.HTML,
-        reply_markup=MAIN_KEYBOARD
+        reply_markup=MAIN_KEYBOARD,
     )
-    
+
     context.user_data.clear()
     return ConversationHandler.END
 
@@ -1437,32 +1771,35 @@ async def process_reply_text(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    saved_name = context.user_data.get('saved_name')
-    saved_ip = context.user_data.get('saved_ip')
-    saved_dep = context.user_data.get('saved_department')
-    
+    saved_name = context.user_data.get("saved_name")
+    saved_ip = context.user_data.get("saved_ip")
+    saved_dep = context.user_data.get("saved_department")
+
     context.user_data.clear()
-    
-    if saved_name: context.user_data['saved_name'] = saved_name
-    if saved_ip: context.user_data['saved_ip'] = saved_ip
-    if saved_dep: context.user_data['saved_department'] = saved_dep
+
+    if saved_name:
+        context.user_data["saved_name"] = saved_name
+    if saved_ip:
+        context.user_data["saved_ip"] = saved_ip
+    if saved_dep:
+        context.user_data["saved_department"] = saved_dep
 
     query = update.callback_query
     if query:
         await query.answer()
-        await query.edit_message_text('Действие отменено.', reply_markup=None)
+        await query.edit_message_text("Действие отменено.", reply_markup=None)
         await context.bot.send_message(
             chat_id=update.effective_user.id,
             text="Вы в главном меню.",
-            reply_markup=MAIN_KEYBOARD
+            reply_markup=MAIN_KEYBOARD,
         )
     else:
         await update.message.reply_text(
-            'Действие отменено.',
-            reply_markup=MAIN_KEYBOARD
+            "Действие отменено.", reply_markup=MAIN_KEYBOARD
         )
-        
+
     return ConversationHandler.END
+
 
 async def handle_unknown_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -1479,7 +1816,7 @@ async def handle_unknown_message(update: Update, context: ContextTypes.DEFAULT_T
         "Пожалуйста, используйте кнопки меню для работы с ботом.\n"
         "Если меню пропало, отправьте команду <i>/start</i>",
         parse_mode=ParseMode.HTML,
-        reply_markup=MAIN_KEYBOARD
+        reply_markup=MAIN_KEYBOARD,
     )
 
 
@@ -1512,7 +1849,7 @@ async def request_password_command(update: Update, context: ContextTypes.DEFAULT
             f"Здравствуйте, {name}!\n"
             f"Сотруднику техподдержки требуется пароль от ЕМИАС для работы по вашей заявке <code>{app_id}</code>.\n\n"
             f"<b>Пожалуйста, нажмите кнопку ниже, чтобы начать:</b>"
-            ),
+        ),
         reply_markup=kb,
         parse_mode=ParseMode.HTML,
     )
@@ -1537,8 +1874,8 @@ async def conv_password_receive(update: Update, context: ContextTypes.DEFAULT_TY
         pass
     await update.message.reply_text(
         "✅ Спасибо, пароль принят и будет немедленно доставлен сотруднику.",
-        reply_markup=MAIN_KEYBOARD
-        )
+        reply_markup=MAIN_KEYBOARD,
+    )
     emp_id = context.bot_data.pop(app_id, None)
     if emp_id:
         await context.bot.send_message(
@@ -1550,23 +1887,26 @@ async def conv_password_receive(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 def main():
-    my_persistence = PicklePersistence(filepath='bot_data.pickle')
+    my_persistence = PicklePersistence(filepath="bot_data.pickle")
 
     application = Application.builder().token(TOKEN).persistence(my_persistence).build()
 
-    cancel_handler = MessageHandler(filters.Text(BTN_CANCEL), cancel)
+    cancel_filter = filters.Regex(f"^{re.escape(BTN_CANCEL)}$")
+
+    cancel_handler = MessageHandler(cancel_filter, cancel)
+
+    back_filter = filters.Regex(f"^{re.escape(BTN_BACK)}$")
 
     conv_handler = ConversationHandler(
         entry_points=[
-            MessageHandler(filters.Text("Start"), conv_ask_name),
+            MessageHandler(filters.Text("Старт"), conv_ask_name),
             MessageHandler(filters.Text("Добавить фото"), conv_ask_update_id),
             MessageHandler(filters.Text("Дополнить заявку"), conv_ask_append_id),
             MessageHandler(filters.Text("Вернуть заявку в работу"), conv_ask_return_id),
             MessageHandler(
                 filters.Text("Проверить статус заявки"), conv_ask_check_status
             ),
-            MessageHandler(filters.Text("📚 Инструкция"), send_instruction), 
-            
+            MessageHandler(filters.Text("📚 Инструкция"), send_instruction),
             CallbackQueryHandler(reply_to_admin_callback, pattern="^reply_admin:"),
         ],
         states={
@@ -1575,31 +1915,47 @@ def main():
                 MessageHandler(filters.TEXT & ~filters.COMMAND, conv_ask_ip),
             ],
             States.START_WAIT_IP: [
+                MessageHandler(back_filter, conv_back_to_name),
                 cancel_handler,
                 MessageHandler(filters.TEXT & ~filters.COMMAND, conv_ask_department),
             ],
             States.START_WAIT_DEPARTMENT: [
-                MessageHandler(filters.Text("📂 Выбрать отделение"), conv_show_departments_list),
-                
+                MessageHandler(back_filter, conv_back_to_ip),
+                MessageHandler(
+                    filters.Text("📂 Выбрать отделение"), conv_show_departments_list
+                ),
                 CallbackQueryHandler(department_callback, pattern="^dep_"),
                 CallbackQueryHandler(department_callback, pattern="^use_saved_dep"),
-
                 CallbackQueryHandler(cancel, pattern="^cancel_action$"),
-                
-                cancel_handler
+                cancel_handler,
             ],
             States.START_WAIT_DETAILS: [
+                MessageHandler(back_filter, conv_back_to_department_bridge),
                 cancel_handler,
                 MessageHandler(filters.TEXT & ~filters.COMMAND, conv_ask_photos),
             ],
             States.START_WAIT_PHOTOS: [
-                MessageHandler(filters.Text("✔️ Done"), conv_show_confirmation),
+                MessageHandler(back_filter, conv_back_to_details),
+                MessageHandler(filters.Text("✔️ Готово"), conv_show_confirmation),
                 MessageHandler(filters.Text("❌ Отменить все"), cancel),
                 MessageHandler(filters.PHOTO | filters.Document.ALL, conv_add_photo),
             ],
             States.START_CONFIRMATION: [
                 CallbackQueryHandler(conv_done, pattern="^confirm_send$"),
+                CallbackQueryHandler(conv_back_to_photos, pattern="^confirm_back$"),
                 CallbackQueryHandler(cancel, pattern="^confirm_cancel$"),
+                CallbackQueryHandler(conv_edit_choice_callback, pattern="^edit:"),
+            ],
+            States.EDIT_WAIT_NAME: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, conv_save_edited_name)
+            ],
+            States.EDIT_WAIT_IP: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, conv_save_edited_ip)
+            ],
+            States.EDIT_WAIT_DETAILS: [
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND, conv_save_edited_details
+                )
             ],
             States.UPDATE_WAIT_ID: [
                 cancel_handler,
@@ -1611,7 +1967,9 @@ def main():
                     filters.PHOTO | filters.Document.ALL,
                     conv_process_update_photo_add,
                 ),
-                MessageHandler(filters.Text("✔️ Done"), conv_process_update_photo_done),
+                MessageHandler(
+                    filters.Text("✔️ Готово"), conv_process_update_photo_done
+                ),
                 MessageHandler(filters.Text("❌ Отменить все"), cancel),
             ],
             States.APPEND_WAIT_ID: [
@@ -1643,7 +2001,6 @@ def main():
         fallbacks=[
             CommandHandler("cancel", cancel),
             MessageHandler(filters.Text(BTN_CANCEL), cancel),
-
             CommandHandler("start", conv_ask_name),
             MessageHandler(filters.Text("Start"), conv_ask_name),
         ],
@@ -1681,8 +2038,8 @@ def main():
 
     application.add_handler(
         MessageHandler(
-            (filters.TEXT | filters.PHOTO | filters.Document.ALL) & ~filters.COMMAND, 
-            handle_unknown_message
+            (filters.TEXT | filters.PHOTO | filters.Document.ALL) & ~filters.COMMAND,
+            handle_unknown_message,
         )
     )
 

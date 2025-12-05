@@ -206,15 +206,17 @@ def repo_get_applications_paginated(status: str, page: int, per_page: int):
 
         file_objects = []
         for p in photo_paths:
-            ext = p.split('.')[-1].lower()
-            is_image = ext in ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp']
-            file_objects.append({
-                "url": url_for("uploaded_file", filename=p),
-                "filename": p,
-                "is_image": is_image,
-                "extension": ext
-            })
-        
+            ext = p.split(".")[-1].lower()
+            is_image = ext in ["jpg", "jpeg", "png", "gif", "bmp", "webp"]
+            file_objects.append(
+                {
+                    "url": url_for("uploaded_file", filename=p),
+                    "filename": p,
+                    "is_image": is_image,
+                    "extension": ext,
+                }
+            )
+
         app_data["photo_objects"] = file_objects
 
         for date_field in ["created_at", "archived_at"]:
@@ -226,8 +228,8 @@ def repo_get_applications_paginated(status: str, page: int, per_page: int):
             except (ValueError, TypeError):
                 app_data[date_field] = None
 
-        if status == 'done':
-            manual_solution = app_data.get('solution')
+        if status == "done":
+            manual_solution = app_data.get("solution")
 
             if manual_solution and "[ОТВЕТ ПОЛЬЗОВАТЕЛЯ]" in str(manual_solution):
                 manual_solution = None
@@ -239,20 +241,19 @@ def repo_get_applications_paginated(status: str, page: int, per_page: int):
                     WHERE application_id = ? 
                     ORDER BY created_at DESC LIMIT 20
                     """,
-                    (app_data['application_id'],)
+                    (app_data["application_id"],),
                 )
                 messages = cur_msgs.fetchall()
-                
+
                 found_text = None
                 for msg in messages:
-                    text = msg['message_text']
+                    text = msg["message_text"]
 
                     if "[ОТВЕТ ПОЛЬЗОВАТЕЛЯ]" not in text:
                         found_text = text
-                        break 
-                
-                app_data['solution'] = found_text
+                        break
 
+                app_data["solution"] = found_text
 
         applications.append(app_data)
 
@@ -454,8 +455,8 @@ def add_application():
 
     for idx, file_data in enumerate(attachments):
         photo_b64 = file_data.get("b64")
-        extension = file_data.get("extension", "jpg").replace('.', '')
-        
+        extension = file_data.get("extension", "jpg").replace(".", "")
+
         if photo_b64:
             filename = f"{application_id}_{idx}.{extension}"
             saved_name = file_service.save_photo_from_b64(photo_b64, filename)
@@ -498,7 +499,7 @@ def update_photos():
     data = request.get_json()
     application_id = data.get("application_id")
     username = data.get("username")
-    
+
     attachments = data.get("attachments", [])
     if not attachments and data.get("photos"):
         attachments = [{"b64": p, "extension": "jpg"} for p in data.get("photos")]
@@ -509,10 +510,12 @@ def update_photos():
     saved_names_list = []
     for idx, file_data in enumerate(attachments):
         photo_b64 = file_data.get("b64")
-        extension = file_data.get("extension", "jpg").replace('.', '')
-        
-        filename = f"{application_id}_upd_{int(datetime.now().timestamp())}_{idx}.{extension}"
-        
+        extension = file_data.get("extension", "jpg").replace(".", "")
+
+        filename = (
+            f"{application_id}_upd_{int(datetime.now().timestamp())}_{idx}.{extension}"
+        )
+
         saved_name = file_service.save_photo_from_b64(photo_b64, filename)
         if not saved_name:
             file_service.delete_photos(saved_names_list)
@@ -694,16 +697,14 @@ def delete_photo(app_id, filename):
 
 @app.route("/uploads/<filename>")
 def uploaded_file(filename):
-    ext = filename.split('.')[-1].lower()
-    
-    image_extensions = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp']
-    
+    ext = filename.split(".")[-1].lower()
+
+    image_extensions = ["jpg", "jpeg", "png", "gif", "webp", "bmp"]
+
     is_attachment = ext not in image_extensions
-    
+
     return send_from_directory(
-        app.config["UPLOAD_FOLDER"], 
-        filename, 
-        as_attachment=is_attachment
+        app.config["UPLOAD_FOLDER"], filename, as_attachment=is_attachment
     )
 
 
