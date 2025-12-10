@@ -93,10 +93,10 @@ def init_db():
         done_by TEXT,
         difficulty TEXT DEFAULT 'low',
         staff_notes TEXT,
-        solution TEXT
+        solution TEXT,
+        rating INTEGER DEFAULT 0 
     )"""
     )
-
     db.execute(
         """CREATE TABLE IF NOT EXISTS messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -106,6 +106,13 @@ def init_db():
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )"""
     )
+
+    try:
+        db.execute("ALTER TABLE applications ADD COLUMN rating INTEGER DEFAULT 0")
+        print("Колонка rating добавлена в таблицу applications.")
+    except sqlite3.OperationalError:
+        pass
+        
     db.commit()
 
 
@@ -148,6 +155,15 @@ def repo_add_message(application_id, sender, text):
         (application_id, sender, text),
     )
     db.commit()
+    
+def repo_save_rating(application_id: str, rating: int):
+    """Сохраняет оценку пользователя."""
+    db = get_db()
+    db.execute(
+        "UPDATE applications SET rating = ? WHERE application_id = ?",
+        (rating, application_id)
+    )
+    db.commit()
 
 
 def repo_restore_application(application_id: str):
@@ -161,7 +177,7 @@ def repo_restore_application(application_id: str):
         return None
 
     cur.execute(
-        "UPDATE applications SET status = 'active', archived_at = NULL, done_by = NULL WHERE application_id = ?",
+        "UPDATE applications SET status = 'active', archived_at = NULL, done_by = NULL, rating = 0 WHERE application_id = ?",
         (application_id,),
     )
     db.commit()
@@ -400,8 +416,21 @@ def repo_append_details(application_id: str, username: str, extra_text: str) -> 
     db.commit()
     return True
 
+@app.route('/rate_application', methods=['POST'])
+def rate_application():
+    """Сохраняет оценку (рейтинг) заявки."""
+    data = request.json
+    app_id = data.get('application_id')
+    rating = data.get('rating')
 
-# --- API ROUTES ---
+    if not app_id or not rating:
+        return jsonify({"error": "Missing data"}), 400
+        
+    try:
+        repo_save_rating(app_id, rating)
+        return jsonify({"status": "success"}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/add_message", methods=["POST"])
@@ -547,9 +576,6 @@ def append_details():
     return jsonify({"message": "Текст заявки дополнен"}), 200
 
 
-# --- WEB ROUTES ---
-
-
 @app.route("/", methods=["GET"])
 def home():
     return render_template("index.html")
@@ -635,6 +661,7 @@ def export_archive():
         "archived_at",
         "done_by",
         "solution",
+        "rating"
     ]
     available_columns = [c for c in columns_to_export if c in df.columns]
 
@@ -648,6 +675,7 @@ def export_archive():
         "archived_at": "Дата выполнения",
         "done_by": "Исполнитель",
         "solution": "Решение",
+        "rating": "Оценка"
     }
     df = df.rename(columns=rename_map)
     for col in ["Создание заявки", "Дата выполнения"]:

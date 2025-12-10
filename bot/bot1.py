@@ -113,6 +113,14 @@ class ApiService:
         status, _ = await self._post_json("append_details", data)
         return status == 200
 
+    async def send_rating(self, application_id, rating):
+        data = {
+            "application_id": application_id,
+            "rating": int(rating)
+        }
+        status, _ = await self._post_json("rate_application", data)
+        return status == 200
+
     async def restore_application(self, application_id):
         status, data = await self._post_json(f"restore/{application_id}", {})
         if status == 200:
@@ -464,50 +472,55 @@ async def finish_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     msg_user = f"{name.title()}, ваша заявка <code>{app_id}</code> выполнена!"
     if additional_text:
-        msg_user += (
-            f"\n\n<b>Дополнительное сообщение:</b>\n{additional_text.capitalize()}"
-        )
+        msg_user += f"\n\n<b>Дополнительное сообщение:</b>\n{additional_text.capitalize()}"
+
+    rating_keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("⭐ 1", callback_data=f"rate:{app_id}:1"),
+            InlineKeyboardButton("⭐ 2", callback_data=f"rate:{app_id}:2"),
+            InlineKeyboardButton("⭐ 3", callback_data=f"rate:{app_id}:3"),
+            InlineKeyboardButton("⭐ 4", callback_data=f"rate:{app_id}:4"),
+            InlineKeyboardButton("⭐ 5", callback_data=f"rate:{app_id}:5"),
+        ]
+    ])
+    
+    confirm_msg = ""
 
     try:
         if file_type == "photo":
             await context.bot.send_photo(
                 chat_id=chat_id,
                 photo=file_id,
-                caption=msg_user,
+                caption=msg_user + "\n\n👇 <b>Оцените качество работы:</b>",
                 parse_mode=ParseMode.HTML,
+                reply_markup=rating_keyboard
             )
-            confirm_msg = f"Заявка {app_id} закрыта (фото отправлено)."
+            confirm_msg = f"Заявка {app_id} закрыта (фото отправлено + запрос оценки)."
 
         elif file_type == "document":
             await context.bot.send_document(
                 chat_id=chat_id,
                 document=file_id,
-                caption=msg_user,
+                caption=msg_user + "\n\n👇 <b>Оцените качество работы:</b>",
                 parse_mode=ParseMode.HTML,
+                reply_markup=rating_keyboard
             )
-            confirm_msg = f"Заявка {app_id} закрыта (документ отправлен)."
+            confirm_msg = f"Заявка {app_id} закрыта"
 
         else:
             await context.bot.send_message(
                 chat_id=chat_id,
-                text=msg_user,
+                text=msg_user + "\n\n👇 <b>Оцените качество работы:</b>",
                 parse_mode=ParseMode.HTML,
+                reply_markup=rating_keyboard
             )
             confirm_msg = f"Заявка {app_id} закрыта."
-
-        if additional_text:
-            confirm_msg += " Решение записано из команды."
-        elif not file_id:
-            confirm_msg += " В решение записано последнее сообщение из чата."
-
+        
         await update.message.reply_text(confirm_msg)
 
     except Exception as e:
         logger.error(f"Ошибка finish_command: {e}")
-        await update.message.reply_text(
-            "Заявка закрыта, но возникла ошибка при отправке уведомления пользователю."
-        )
-
+        await update.message.reply_text("Заявка закрыта, но возникла ошибка при отправке уведомления пользователю.")
 
 async def whisper_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args
@@ -1885,6 +1898,28 @@ async def conv_password_receive(update: Update, context: ContextTypes.DEFAULT_TY
         )
     return ConversationHandler.END
 
+async def rate_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    data_parts = query.data.split(":")
+    if len(data_parts) != 3:
+        return
+
+    app_id = data_parts[1]
+    stars = data_parts[2]
+
+    success = await api_client.send_rating(app_id, stars)
+
+    if success:
+        new_text = f"✅ Спасибо! Вы поставили оценку: {stars} ⭐"
+    else:
+        new_text = f"Спасибо! Ваша оценка: {stars} ⭐ (не удалось сохранить на сервере)"
+
+    try:
+        await query.edit_message_caption(caption=new_text) if query.message.caption else await query.edit_message_text(text=new_text)
+    except BadRequest:
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=new_text)
 
 def main():
     my_persistence = PicklePersistence(filepath="bot_data.pickle")
@@ -2034,6 +2069,9 @@ def main():
     )
     application.add_handler(
         CallbackQueryHandler(back_to_list_callback, pattern="^back_to_active_list$")
+    )
+    application.add_handler(
+        CallbackQueryHandler(rate_handler, pattern="^rate:")
     )
 
     application.add_handler(
