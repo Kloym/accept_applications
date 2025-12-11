@@ -332,7 +332,7 @@ BTN_BACK = "⬅️ Вернуться к предыдущему шагу"
 
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
     [
-        [KeyboardButton("Старт"), KeyboardButton("🔄 Повторить последнюю заявку")],
+        [KeyboardButton("📝 Новая заявка"), KeyboardButton("🔄 Повторить последнюю заявку")],
         [
             KeyboardButton("Проверить статус заявки"),
             KeyboardButton("Вернуть заявку в работу"),
@@ -2155,7 +2155,7 @@ def main():
 
     conv_handler = ConversationHandler(
         entry_points=[
-            MessageHandler(filters.Text("Старт"), conv_ask_name),
+            MessageHandler(filters.Text("📝 Новая заявка"), conv_ask_name),
             MessageHandler(filters.Text("🔄 Повторить последнюю заявку"), conv_repeat_last_app),
             MessageHandler(filters.Text("Добавить фото"), conv_ask_update_id),
             MessageHandler(filters.Text("Дополнить заявку"), conv_ask_append_id),
@@ -2259,7 +2259,7 @@ def main():
             CommandHandler("cancel", cancel),
             MessageHandler(filters.Text(BTN_CANCEL), cancel),
             CommandHandler("start", conv_ask_name),
-            MessageHandler(filters.Text("Start"), conv_ask_name),
+            MessageHandler(filters.Text("📝 Новая заявка"), conv_ask_name),
         ],
     )
 
