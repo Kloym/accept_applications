@@ -1,6 +1,5 @@
 import logging
 import base64
-import requests
 import aiohttp
 import sqlite3
 import uuid
@@ -30,8 +29,15 @@ from telegram.ext import (
 )
 from dotenv import load_dotenv
 import os
-
 from op import DEPARTMENTS, DEPARTMENTS_PER_PAGE
+import io
+import matplotlib.pyplot as plt
+from collections import Counter
+import matplotlib
+matplotlib.use('Agg')
+
+
+
 
 load_dotenv()
 logging.basicConfig(
@@ -45,7 +51,13 @@ TOKEN = os.getenv("TOKEN")
 BASE_SERVER_URL = "http://127.0.0.1:5000"
 DB_FILE = "applications.db"
 DEPARTMENTS = sorted(DEPARTMENTS)
-NOTIFY_CHAT_IDS = [308035415]
+raw_admin_ids = os.getenv("ADMIN_IDS", "")
+if raw_admin_ids:
+    NOTIFY_CHAT_IDS = [int(x.strip()) for x in raw_admin_ids.split(",") if x.strip().isdigit()]
+else:
+    NOTIFY_CHAT_IDS = []
+    logger.warning("⚠️ В .env не указаны ADMIN_IDS! Рассылка и админка работать не будут.")
+
 USERNAME_TO_FIO = {
     "pasheug": "Пашков Евгений Олегович",
     "NRiskin": "Рискин Никита Дмитриевич",
@@ -193,6 +205,43 @@ class DbService:
         conn.close()
         return chat_id, name
 
+    def get_last_user_data(self, chat_id):
+        """Получает данные последней заявки пользователя для автозаполнения."""
+        conn = self._get_db()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT name, ip, department FROM applications WHERE chat_id = ? ORDER BY archived_at DESC, application_id DESC LIMIT 1",
+                (chat_id,)
+            )
+            row = cursor.fetchone()
+            conn.close()
+            if row:
+                return {
+                    "name": row["name"],
+                    "ip": row["ip"],
+                    "department": row["department"]
+                }
+            return None
+        except Exception as e:
+            logger.error(f"Ошибка получения данных пользователя: {e}")
+            conn.close()
+            return None
+        
+    def get_statistics_data(self):
+        """Собирает данные для отчета."""
+        conn = self._get_db()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT status, department, archived_at, created_at FROM applications")
+            rows = cursor.fetchall()
+        except Exception as e:
+            logger.error(f"Ошибка чтения статистики: {e}")
+            rows = []
+        
+        conn.close()
+        return rows
+
     def get_app_for_whisper(self, app_id):
         conn = self._get_db()
         cursor = conn.cursor()
@@ -283,12 +332,13 @@ BTN_BACK = "⬅️ Вернуться к предыдущему шагу"
 
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
     [
-        [KeyboardButton("Старт"), KeyboardButton("📚 Инструкция")],
+        [KeyboardButton("Старт"), KeyboardButton("🔄 Повторить последнюю заявку")],
         [
             KeyboardButton("Проверить статус заявки"),
             KeyboardButton("Вернуть заявку в работу"),
+            KeyboardButton("Дополнить заявку"),
         ],
-        [KeyboardButton("Добавить фото"), KeyboardButton("Дополнить заявку")],
+        [KeyboardButton("Добавить фото"), KeyboardButton("📚 Инструкция")],
     ],
     resize_keyboard=True,
 )
@@ -821,7 +871,10 @@ async def conv_ask_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if saved_dep:
         context.user_data["saved_department"] = saved_dep
 
-    text = '<b>👋 Введите ФИО:</b>\n\n(Или нажмите кнопку "Отменить действие")'
+    text = (
+        '1️⃣⬜⬜⬜ <b>Шаг 1 из 4</b>\n'
+        '<b>👋 Введите ФИО:</b>\n\n(Или нажмите кнопку "Отменить действие")'
+    )
     buttons = [[KeyboardButton(BTN_CANCEL)]]
 
     if saved_name:
@@ -851,7 +904,7 @@ async def conv_ask_ip(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["saved_name"] = fio
 
     saved_ip = context.user_data.get("saved_ip")
-    text = "<b>🌐 Теперь введите IP адрес компьютера:</b>"
+    text = "1️⃣2️⃣⬜⬜ <b>Шаг 2 из 4</b>\n<b>🌐 Теперь введите IP адрес компьютера:</b>"
     buttons = [[KeyboardButton(BTN_BACK), KeyboardButton(BTN_CANCEL)]]
 
     if saved_ip:
@@ -926,7 +979,7 @@ async def conv_show_departments_list(
     saved_dep = context.user_data.get("saved_department")
 
     await update.message.reply_text(
-        "<b>🗂️ Выберите отделение:</b>",
+        "1️⃣2️⃣3️⃣⬜ <b>Шаг 3 из 4</b>\n<b>🗂️ Выберите отделение:</b>",
         reply_markup=get_departments_inline_keyboard(0, saved_dep=saved_dep),
         parse_mode=ParseMode.HTML,
     )
@@ -1024,7 +1077,7 @@ async def department_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         await context.bot.send_message(
             chat_id=update.effective_user.id,
-            text="<b>✍️ Опишите проблему:</b>",
+            text="1️⃣2️⃣3️⃣4️⃣ <b>Шаг 4 из 4</b>\n<b>✍️ Опишите проблему:</b>",
             parse_mode=ParseMode.HTML,
             reply_markup=details_kb,
         )
@@ -1921,6 +1974,174 @@ async def rate_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except BadRequest:
         await context.bot.send_message(chat_id=update.effective_chat.id, text=new_text)
 
+async def conv_repeat_last_app(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    last_data = await asyncio.to_thread(db_service.get_last_user_data, user_id)
+    
+    if not last_data:
+        await update.message.reply_text(
+            "⚠️ <b>История не найдена.</b>\n"
+            "Вы еще не подавали заявки или база данных была очищена.\n"
+            "Начинаем стандартную процедуру...",
+            parse_mode=ParseMode.HTML
+        )
+        return await conv_ask_name(update, context)
+
+    context.user_data["name"] = last_data["name"]
+    context.user_data["ip_address"] = last_data["ip"]
+    context.user_data["department"] = last_data["department"]
+
+    context.user_data["saved_name"] = last_data["name"]
+    context.user_data["saved_ip"] = last_data["ip"]
+    context.user_data["saved_department"] = last_data["department"]
+
+    details_kb = ReplyKeyboardMarkup(
+        [[KeyboardButton(BTN_BACK), KeyboardButton(BTN_CANCEL)]],
+        resize_keyboard=True,
+    )
+
+    msg = (
+        f"🔄 <b>Автозаполнение по последней заявке:</b>\n\n"
+        f"👤 ФИО: <b>{last_data['name']}</b>\n"
+        f"🌐 IP: <b>{last_data['ip']}</b>\n"
+        f"🏥 Отделение: <b>{last_data['department']}</b>\n\n"
+        f"🚀 1️⃣2️⃣3️⃣4️⃣ <b>Шаг 4 из 4</b>\n"
+        f"<b>✍️ Опишите проблему:</b>"
+    )
+
+    await update.message.reply_text(
+        msg,
+        parse_mode=ParseMode.HTML,
+        reply_markup=details_kb
+    )
+    
+    return States.START_WAIT_DETAILS
+
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id not in NOTIFY_CHAT_IDS:
+        await update.message.reply_text("⛔ У вас нет прав для просмотра статистики.")
+        return
+
+    msg = await update.message.reply_text("📊 Анализирую базу данных и рисую график...")
+
+    rows = await asyncio.to_thread(db_service.get_statistics_data)
+    
+    if not rows:
+        await msg.edit_text("В базе данных пока пусто.")
+        return
+
+    total_apps = len(rows)
+    active_apps = 0
+    done_today = 0
+    departments = []
+    
+    total_seconds_spent = 0
+    count_closed_with_dates = 0
+    
+    today_str = datetime.now().strftime("%Y-%m-%d")
+
+    for row in rows:
+        status = row["status"]
+        dept = row["department"]
+        archived_at = row["archived_at"]
+        created_at = row["created_at"]
+
+        if status == "active":
+            active_apps += 1
+        
+        if dept:
+            departments.append(dept)
+
+        if status == "done" and archived_at:
+            if archived_at.startswith(today_str):
+                done_today += 1
+
+            if created_at:
+                try:
+                    fmt = "%Y-%m-%d %H:%M"
+                    start_dt = datetime.strptime(created_at, fmt)
+                    end_dt = datetime.strptime(archived_at, fmt)
+                    
+                    delta = (end_dt - start_dt).total_seconds()
+                    
+                    if delta > 0:
+                        total_seconds_spent += delta
+                        count_closed_with_dates += 1
+                except ValueError:
+                    continue
+
+    avg_time_str = "—"
+    if count_closed_with_dates > 0:
+        avg_seconds = total_seconds_spent / count_closed_with_dates
+        avg_hours = int(avg_seconds // 3600)
+        avg_minutes = int((avg_seconds % 3600) // 60)
+        
+        if avg_hours > 0:
+            avg_time_str = f"{avg_hours} ч. {avg_minutes} мин."
+        else:
+            avg_time_str = f"{avg_minutes} мин."
+
+    dept_counts = Counter(departments).most_common(5)
+    top_dept_text = f"{dept_counts[0][0]} ({dept_counts[0][1]})" if dept_counts else "Нет данных"
+
+    report_text = (
+        f"📊 <b>Статистика КИС ЕМИАС-отдела</b>\n\n"
+        f"📅 <b>Закрыто за сегодня:</b> {done_today}\n"
+        f"⚡ <b>Среднее время решения:</b> {avg_time_str}\n"
+        f"🔥 <b>В работе прямо сейчас:</b> {active_apps}\n"
+        f"📂 <b>Всего заявок за всё время:</b> {total_apps}\n"
+        f"🏆 <b>Самое проблемное отделение:</b> {top_dept_text}\n"
+    )
+
+    def create_plot():
+        if not dept_counts:
+            return None
+            
+        labels = [d[0] for d in dept_counts]
+        values = [d[1] for d in dept_counts]
+
+        labels.reverse()
+        values.reverse()
+        
+        plt.figure(figsize=(10, 6))
+        bars = plt.barh(labels, values, color='#3b82f6', height=0.6)
+        
+        plt.xlabel('Количество заявок')
+        plt.title('Топ загруженных отделений')
+        plt.grid(axis='x', linestyle='--', alpha=0.5)
+        plt.tight_layout()
+
+        for bar in bars:
+            width = bar.get_width()
+            plt.text(width + 0.1, bar.get_y() + bar.get_height()/2, 
+                     f'{int(width)}', ha='left', va='center', fontweight='bold')
+
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', dpi=100)
+        buf.seek(0)
+        plt.close()
+        return buf
+
+    photo_stream = await asyncio.to_thread(create_plot)
+
+    await msg.delete()
+    
+    if photo_stream:
+        await context.bot.send_photo(
+            chat_id=user_id,
+            photo=photo_stream,
+            caption=report_text,
+            parse_mode=ParseMode.HTML
+        )
+    else:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=report_text + "\n(График не создан — нет данных по отделам)",
+            parse_mode=ParseMode.HTML
+        )
+
 def main():
     my_persistence = PicklePersistence(filepath="bot_data.pickle")
 
@@ -1935,6 +2156,7 @@ def main():
     conv_handler = ConversationHandler(
         entry_points=[
             MessageHandler(filters.Text("Старт"), conv_ask_name),
+            MessageHandler(filters.Text("🔄 Повторить последнюю заявку"), conv_repeat_last_app),
             MessageHandler(filters.Text("Добавить фото"), conv_ask_update_id),
             MessageHandler(filters.Text("Дополнить заявку"), conv_ask_append_id),
             MessageHandler(filters.Text("Вернуть заявку в работу"), conv_ask_return_id),
@@ -2063,6 +2285,7 @@ def main():
     application.add_handler(CommandHandler("e", restore_command))
     application.add_handler(CommandHandler("r", request_password_command))
     application.add_handler(CommandHandler("b", broadcast_command))
+    application.add_handler(CommandHandler("stats", stats_command))
 
     application.add_handler(
         CallbackQueryHandler(check_status_callback, pattern="^check_status:")
