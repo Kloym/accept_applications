@@ -1,3 +1,6 @@
 - Когда буду ставить новые обновления
 - Нужно перенести applications.html, bot1.py, server.py
 - И файл с инструкцией бота(manual.docx)
+
+SELECT chat_id from applications where username = 'vitalyayastrebov';
+SELECT chat_id from applications where username = 'YriyVD';
