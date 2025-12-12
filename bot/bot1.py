@@ -1098,7 +1098,7 @@ async def conv_ask_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     await update.message.reply_text(
-        "<b>🖼️ Если хотите добавить скриншот(фото) ошибки, отправьте их сейчас.</b>\n"
+        "<b>🖼️ Если хотите добавить скриншот(фото) ошибки или документ(Word, Excel, PDF, ZIP), отправьте их сейчас.</b>\n"
         "Можно отправить несколько. Когда всё готово, нажмите <b>Готово</b>.",
         reply_markup=photo_kb,
         parse_mode=ParseMode.HTML,
@@ -1125,8 +1125,32 @@ async def conv_add_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             file_obj = await context.bot.get_file(update.message.photo[-1].file_id)
             file_data["extension"] = "jpg"
 
+        elif update.message.video:
+            video = update.message.video
+
+            if video.file_size and video.file_size > 20 * 1024 * 1024:
+                await update.message.reply_text(
+                    "⚠️ <b>Видео слишком большое!</b>\n"
+                    "Телеграм позволяет ботам скачивать файлы только до 20 МБ.\n"
+                    "Пожалуйста, сожмите видео или отправьте скриншот.",
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=photo_kb
+                )
+                return States.START_WAIT_PHOTOS
+
+            file_obj = await context.bot.get_file(video.file_id)
+            file_data["extension"] = "mp4" 
+
         elif update.message.document:
             doc = update.message.document
+
+            if doc.file_size and doc.file_size > 20 * 1024 * 1024:
+                await update.message.reply_text(
+                    "⚠️ Файл слишком большой (лимит 20 МБ).",
+                    reply_markup=photo_kb
+                )
+                return States.START_WAIT_PHOTOS
+
             file_obj = await context.bot.get_file(doc.file_id)
             if doc.file_name and "." in doc.file_name:
                 file_data["extension"] = doc.file_name.split(".")[-1].lower()
@@ -1135,14 +1159,21 @@ async def conv_add_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         else:
             await update.message.reply_text(
-                "Пожалуйста, пришлите фото или файл (Word/Excel).",
+                "Пожалуйста, пришлите фото, видео или файл.",
                 reply_markup=photo_kb,
             )
             return States.START_WAIT_PHOTOS
 
         if file_obj:
+            status_msg = await update.message.reply_text("⏳ Обработка файла...")
+            
             downloaded_bytes = await file_obj.download_as_bytearray()
             file_data["b64"] = base64.b64encode(downloaded_bytes).decode("utf-8")
+
+            try:
+                await status_msg.delete()
+            except:
+                pass
 
         if "attachments" not in context.user_data:
             context.user_data["attachments"] = []
@@ -1157,7 +1188,8 @@ async def conv_add_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"File upload error: {e}")
         await update.message.reply_text(
-            "Ошибка обработки файла.", reply_markup=DONE_KEYBOARD
+            "Ошибка обработки файла. Возможно, он слишком большой или поврежден.", 
+            reply_markup=DONE_KEYBOARD
         )
     return States.START_WAIT_PHOTOS
 
@@ -1795,7 +1827,8 @@ async def reply_to_admin_callback(update: Update, context: ContextTypes.DEFAULT_
 
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
-        text=f"✍️ <b>Введите ваш ответ по заявке <code>{app_id}</code>:</b>",
+        text=f"✍️ <b>Введите ваш ответ по заявке <code>{app_id}</code>:</b>\n\n"
+            f"⚠️ <i>Отправляйте всё одним сообщением. Если прикладываете фото или документ — пишите текст в описании к нему!!!</i>",
         parse_mode=ParseMode.HTML,
         reply_markup=CANCEL_KEYBOARD,
     )
@@ -1804,25 +1837,67 @@ async def reply_to_admin_callback(update: Update, context: ContextTypes.DEFAULT_
 
 async def process_reply_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     app_id = context.user_data.get("reply_app_id")
-    text_reply = update.message.text
     username = update.effective_user.username or "Пользователь"
 
-    formatted_text = f"[ОТВЕТ ПОЛЬЗОВАТЕЛЯ]: {text_reply}"
+    message_text = ""
+    file_id = None
+    file_type = "text"
+
+    if update.message.text:
+        message_text = update.message.text
+    elif update.message.caption:
+        message_text = update.message.caption
+
+    if update.message.photo:
+        file_id = update.message.photo[-1].file_id
+        file_type = "photo"
+    elif update.message.document:
+        file_id = update.message.document.file_id
+        file_type = "document"
+
+    api_text_prefix = ""
+    if file_type == "photo":
+        api_text_prefix = "[Прикреплено фото] "
+    elif file_type == "document":
+        api_text_prefix = "[Прикреплен файл] "
+
+    formatted_text = f"[ОТВЕТ ПОЛЬЗОВАТЕЛЯ]: {api_text_prefix}{message_text}"
+
     await api_client.add_message(app_id, username, formatted_text)
+
+    caption_admin = f"📨 <b>Ответ от пользователя!</b>\nID: <code>{app_id}</code>\n"
+    if message_text:
+        caption_admin += f"{message_text}"
 
     for admin_id in NOTIFY_CHAT_IDS:
         try:
-            await context.bot.send_message(
-                admin_id,
-                f"📨 <b>Ответ от пользователя!</b>\nID: <code>{app_id}</code>\n{text_reply}",
-                parse_mode=ParseMode.HTML,
-            )
-        except:
-            pass
+            if file_type == "photo":
+                await context.bot.send_photo(
+                    chat_id=admin_id,
+                    photo=file_id,
+                    caption=caption_admin,
+                    parse_mode=ParseMode.HTML
+                )
+            elif file_type == "document":
+                await context.bot.send_document(
+                    chat_id=admin_id,
+                    document=file_id,
+                    caption=caption_admin,
+                    parse_mode=ParseMode.HTML
+                )
+            else:
+                await context.bot.send_message(
+                    chat_id=admin_id,
+                    text=caption_admin,
+                    parse_mode=ParseMode.HTML,
+                )
+        except Exception as e:
+            logger.error(f"Не удалось переслать ответ админу {admin_id}: {e}")
 
     await update.message.reply_text(
         "✅ Ваш ответ отправлен.", reply_markup=MAIN_KEYBOARD
     )
+
     try:
         msg_id = context.user_data.get("reply_message_id")
         if msg_id:
@@ -2195,7 +2270,7 @@ def main():
                 MessageHandler(back_filter, conv_back_to_details),
                 MessageHandler(filters.Text("✔️ Готово"), conv_show_confirmation),
                 MessageHandler(filters.Text("❌ Отменить все"), cancel),
-                MessageHandler(filters.PHOTO | filters.Document.ALL, conv_add_photo),
+                MessageHandler(filters.PHOTO | filters.Document.ALL | filters.VIDEO, conv_add_photo),
             ],
             States.START_CONFIRMATION: [
                 CallbackQueryHandler(conv_done, pattern="^confirm_send$"),
@@ -2252,7 +2327,10 @@ def main():
             ],
             States.REPLY_WAIT_TEXT: [
                 cancel_handler,
-                MessageHandler(filters.TEXT & ~filters.COMMAND, process_reply_text),
+                MessageHandler(
+                    (filters.TEXT | filters.PHOTO | filters.Document.ALL) & ~filters.COMMAND, 
+                    process_reply_text
+                ),
             ],
         },
         fallbacks=[

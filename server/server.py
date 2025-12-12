@@ -26,6 +26,7 @@ UPLOAD_FOLDER_PATH = os.path.join(BASE_DIR, UPLOAD_FOLDER_NAME)
 app = Flask(__name__)
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER_PATH
 app.config["DATABASE"] = DATABASE_FILE
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
 
 PER_PAGE = 50
 
@@ -224,15 +225,19 @@ def repo_get_applications_paginated(status: str, page: int, per_page: int):
         for p in photo_paths:
             ext = p.split(".")[-1].lower()
             is_image = ext in ["jpg", "jpeg", "png", "gif", "bmp", "webp"]
+            is_video = ext in ["mp4", "mov", "avi", "webm", "mkv"]
+            is_other_file = not is_image and not is_video
+            
             file_objects.append(
                 {
                     "url": url_for("uploaded_file", filename=p),
                     "filename": p,
                     "is_image": is_image,
+                    "is_video": is_video,
+                    "is_file": is_other_file,
                     "extension": ext,
                 }
             )
-
         app_data["photo_objects"] = file_objects
 
         for date_field in ["created_at", "archived_at"]:
@@ -728,11 +733,13 @@ def uploaded_file(filename):
     ext = filename.split(".")[-1].lower()
 
     image_extensions = ["jpg", "jpeg", "png", "gif", "webp", "bmp"]
-
-    is_attachment = ext not in image_extensions
+    video_extensions = ["mp4", "mov", "avi", "webm", "mkv"]
+    is_attachment = (ext not in image_extensions) and (ext not in video_extensions)
 
     return send_from_directory(
-        app.config["UPLOAD_FOLDER"], filename, as_attachment=is_attachment
+        app.config["UPLOAD_FOLDER"], 
+        filename, 
+        as_attachment=is_attachment
     )
 
 

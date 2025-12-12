@@ -139,6 +139,13 @@
         display: block; 
     }
 
+    video {
+        border-radius: 4px;
+        display: block;
+        background: #000;
+        object-fit: cover;
+    }
+
     .photo-gallery {
         display: flex;
         overflow-x: auto;
@@ -420,18 +427,22 @@
                     {% if app.photo_objects %}
                         <div class="photo-gallery">
                         {% for photo in app.photo_objects %}
-                            <div class="photo-item">
-                                <a href="{{ photo.url }}" 
-                                    class="photo-link" 
-                                    {% if photo.is_image %} target="_blank" {% else %} download {% endif %}>
-                                    
-                                    {% if photo.is_image %}
-                                        <img src="{{ photo.url }}" 
-                                            alt="Фото" 
-                                            loading="lazy" 
-                                            width="120" 
-                                            height="150"
-                                            style="object-fit: cover;"> {% else %}
+                            <div class="photo-item"> 
+                                {% if photo.is_image %}
+                                    <a href="{{ photo.url }}" class="photo-link" target="_blank">
+                                        <img src="{{ photo.url }}" alt="Фото" loading="lazy" width="120" height="150" style="object-fit: cover;">
+                                    </a>
+
+                                {% elif photo.is_video %}
+                                    <div style="width: 120px; height: 150px;">
+                                        <video width="120" height="150" controls preload="metadata">
+                                            <source src="{{ photo.url }}" type="video/mp4">
+                                            Ваш браузер не поддерживает видео.
+                                        </video>
+                                    </div>
+
+                                {% else %}
+                                    <a href="{{ photo.url }}" class="photo-link" download> 
                                         <div style="width: 120px; height: 150px; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #f8f9fa; border: 1px solid #ddd; border-radius: 4px; color: #333;">
                                             <span style="font-size: 40px; margin-bottom: 5px;">
                                                 {% if 'xls' in photo.extension or 'csv' in photo.extension %}
@@ -449,8 +460,8 @@
                                             </span>
                                             <span style="font-size: 10px; color: #666;">Скачать</span>
                                         </div>
-                                    {% endif %}
-                                </a>
+                                    </a>
+                                {% endif %}
                                 
                                 {% if not archive %}
                                 <form method="POST" 
