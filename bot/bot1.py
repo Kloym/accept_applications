@@ -35,10 +35,10 @@ import matplotlib.pyplot as plt
 from collections import Counter
 import matplotlib
 matplotlib.use('Agg')
+from concurrent.futures import ProcessPoolExecutor
 
 
-
-
+process_pool = None
 load_dotenv()
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -61,8 +61,74 @@ else:
 USERNAME_TO_FIO = {
     "pasheug": "Пашков Евгений Олегович",
     "NRiskin": "Рискин Никита Дмитриевич",
+    "kloym": "Сергеев Алексей Андреевич",
 }
 
+def generate_time_plot_sync(hours: list, counts: list) -> io.BytesIO:
+    """Рисует график активности по часам."""
+    plt.figure(figsize=(10, 6))
+    plt.plot(hours, counts, marker='o', color='#3b82f6', linewidth=2, label='Заявки')
+    plt.fill_between(hours, counts, color='#3b82f6', alpha=0.3)
+    
+    plt.title('Активность подачи заявок по времени суток')
+    plt.xlabel('Часы (00-23)')
+    plt.ylabel('Количество заявок')
+    plt.grid(True, linestyle='--', alpha=0.6)
+    plt.xticks(hours)
+    
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', dpi=100)
+    buf.seek(0)
+    plt.close()
+    return buf
+
+def generate_rating_plot_sync(labels: list, sizes: list) -> io.BytesIO:
+    """Рисует круговую диаграмму (Pie Chart)."""
+    plt.figure(figsize=(8, 8))
+    colors_map = {
+        '5': '#22c55e', '4': '#3b82f6', '3': '#eab308', 
+        '2': '#f97316', '1': '#ef4444'
+    }
+    colors = [colors_map.get(str(l), '#94a3b8') for l in labels]
+
+    plt.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=140, colors=colors, 
+            textprops={'fontsize': 12, 'fontweight': 'bold'})
+    
+    plt.title('Распределение оценок пользователей')
+    
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', dpi=100)
+    buf.seek(0)
+    plt.close()
+    return buf
+
+
+def generate_plot_sync(labels: list, values: list) -> io.BytesIO:
+    """
+    Эта функция выполняется в отдельном процессе.
+    Она берет списки данных и возвращает байты картинки.
+    """
+    plt.figure(figsize=(10, 6))
+
+    bars = plt.barh(labels, values, color='#3b82f6', height=0.6)
+    
+    plt.xlabel('Количество заявок')
+    plt.title('Топ загруженных отделений')
+    plt.grid(axis='x', linestyle='--', alpha=0.5)
+    plt.tight_layout()
+
+    for bar in bars:
+        width = bar.get_width()
+        plt.text(width + 0.1, bar.get_y() + bar.get_height()/2, 
+                 f'{int(width)}', ha='left', va='center', fontweight='bold')
+
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', dpi=100)
+    buf.seek(0)
+
+    plt.close()
+    
+    return buf
 
 class States(Enum):
     START_ROUTES = 0
@@ -102,6 +168,20 @@ class ApiService:
             except Exception as e:
                 logger.error(f"API Generic Error: {e}")
                 return 500, {"error": str(e)}
+            
+    async def assign_application(self, application_id, admin_name):
+        data = {
+            "application_id": application_id,
+            "admin_name": admin_name
+        }
+        status, response_json = await self._post_json("api/assign", data)
+        
+        if status == 200:
+            return "success", response_json 
+        elif status == 409: 
+            return "already_taken", response_json
+        else:
+            return "error", None
 
     async def post_new_application(self, data):
         status, _ = await self._post_json("applications", data)
@@ -211,7 +291,7 @@ class DbService:
         cursor = conn.cursor()
         try:
             cursor.execute(
-                "SELECT name, ip, department FROM applications WHERE chat_id = ? ORDER BY archived_at DESC, application_id DESC LIMIT 1",
+                "SELECT name, ip, department FROM applications WHERE chat_id = ? ORDER BY created_at DESC LIMIT 1",
                 (chat_id,)
             )
             row = cursor.fetchone()
@@ -322,6 +402,62 @@ class DbService:
         rows = cursor.fetchall()
         conn.close()
         return [row["application_id"] for row in rows]
+    
+    def check_and_add_assignee_column(self):
+        """Безопасно добавляет колонку assignee, если её нет."""
+        conn = self._get_db()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT assignee FROM applications LIMIT 1")
+        except sqlite3.OperationalError:
+            cursor.execute("ALTER TABLE applications ADD COLUMN assignee TEXT")
+            conn.commit()
+        conn.close()
+
+    def set_assignee(self, app_id, admin_name):
+        conn = self._get_db()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE applications 
+            SET assignee = ? 
+            WHERE application_id = ? AND (assignee IS NULL OR assignee = '')
+            """, 
+            (admin_name, app_id)
+        )
+        if cursor.rowcount > 0:
+            conn.commit()
+            cursor.execute("SELECT chat_id, name FROM applications WHERE application_id = ?", (app_id,))
+            row = cursor.fetchone()
+            conn.close()
+            return "success", row["chat_id"], row["name"], None
+        else:
+            cursor.execute("SELECT assignee FROM applications WHERE application_id = ?", (app_id,))
+            row = cursor.fetchone()
+            conn.close()
+            
+            if row and row["assignee"]:
+                return "already_taken", None, None, row["assignee"]
+            else:
+                return "not_found", None, None, None
+
+    def get_time_stats(self):
+        """Данные для графика по часам."""
+        conn = self._get_db()
+        cursor = conn.cursor()
+        cursor.execute("SELECT strftime('%H', created_at) as h, COUNT(*) FROM applications WHERE created_at IS NOT NULL GROUP BY h ORDER BY h")
+        rows = cursor.fetchall()
+        conn.close()
+        return rows
+
+    def get_rating_stats(self):
+        """Данные для пирога с оценками."""
+        conn = self._get_db()
+        cursor = conn.cursor()
+        cursor.execute("SELECT rating, COUNT(*) FROM applications WHERE rating IS NOT NULL AND rating > 0 GROUP BY rating")
+        rows = cursor.fetchall()
+        conn.close()
+        return rows
 
 
 api_client = ApiService(BASE_SERVER_URL)
@@ -438,7 +574,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "✅ Уведомление о выполнении вашей заявки.\n"
         "♻️ <b>Вернуть заявку в работу</b> - Если проблема не решена.\n\n"
         "<b>Как пользоваться:</b>\n"
-        "1. Нажмите кнопку <b>Старт</b> для создания новой заявки.\n"
+        "1. Нажмите кнопку <b>Новая заявка</b> для создания новой заявки.\n"
         "2. Следуйте инструкциям бота: введите ФИО, IP-адрес, выберите отделение и опишите проблему.\n"
         "3. При необходимости прикрепите фото.\n"
         "4. После отправки заявки вы получите уникальный ID. При нажатии на ID вы удобно можете его скопировать.\n\n"
@@ -1373,7 +1509,7 @@ async def conv_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🔔 <b>Новая заявка!</b> 🔔\n\n"
         f"<b>ID:</b> <code>{app_id}</code>\n"
         f"<b>От:</b> {data['name']}\n"
-        f"<b>Файлов:</b> {len(data['attachments'])} шт.\n\n"
+        f"<b>Файлов:</b> {len(data['attachments'])} шт.\n"
         f"<b>Описание:</b>\n{data['details'][:40]}..."
     )
 
@@ -1403,16 +1539,25 @@ async def conv_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     final_text = (
         f"<b>✅ Ваша заявка принята в работу!</b>\n"
         f"Уникальный идентификатор заявки: <code>{app_id}</code>\n\n"
-        "Чтобы подать новую заявку, нажмите Старт."
+        "Чтобы подать новую заявку, нажмите Новая Заявка."
     )
 
     await context.bot.send_message(
         chat_id, final_text, parse_mode=ParseMode.HTML, reply_markup=MAIN_KEYBOARD
     )
 
+    admin_markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🙋‍♂️ Взять в работу", callback_data=f"assign:{app_id}")]
+    ])
+
     for nid in NOTIFY_CHAT_IDS:
         try:
-            await context.bot.send_message(nid, msg_admin, parse_mode=ParseMode.HTML)
+            await context.bot.send_message(
+                nid, 
+                msg_admin, 
+                parse_mode=ParseMode.HTML,
+                reply_markup=admin_markup
+            )
         except:
             pass
 
@@ -2102,19 +2247,21 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await update.message.reply_text("📊 Анализирую базу данных и рисую график...")
 
     rows = await asyncio.to_thread(db_service.get_statistics_data)
-    
     if not rows:
         await msg.edit_text("В базе данных пока пусто.")
+        return
+    
+    if process_pool is None:
+        logger.error("Пул процессов не инициализирован! Проверьте блок if __name__ == '__main__':")
+        await msg.edit_text("Ошибка конфигурации бота (нет пула процессов).")
         return
 
     total_apps = len(rows)
     active_apps = 0
     done_today = 0
     departments = []
-    
     total_seconds_spent = 0
     count_closed_with_dates = 0
-    
     today_str = datetime.now().strftime("%Y-%m-%d")
 
     for row in rows:
@@ -2138,9 +2285,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     fmt = "%Y-%m-%d %H:%M"
                     start_dt = datetime.strptime(created_at, fmt)
                     end_dt = datetime.strptime(archived_at, fmt)
-                    
                     delta = (end_dt - start_dt).total_seconds()
-                    
                     if delta > 0:
                         total_seconds_spent += delta
                         count_closed_with_dates += 1
@@ -2152,11 +2297,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         avg_seconds = total_seconds_spent / count_closed_with_dates
         avg_hours = int(avg_seconds // 3600)
         avg_minutes = int((avg_seconds % 3600) // 60)
-        
-        if avg_hours > 0:
-            avg_time_str = f"{avg_hours} ч. {avg_minutes} мин."
-        else:
-            avg_time_str = f"{avg_minutes} мин."
+        avg_time_str = f"{avg_hours} ч. {avg_minutes} мин." if avg_hours > 0 else f"{avg_minutes} мин."
 
     dept_counts = Counter(departments).most_common(5)
     top_dept_text = f"{dept_counts[0][0]} ({dept_counts[0][1]})" if dept_counts else "Нет данных"
@@ -2170,39 +2311,34 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🏆 <b>Самое проблемное отделение:</b> {top_dept_text}\n"
     )
 
-    def create_plot():
-        if not dept_counts:
-            return None
-            
+    
+    photo_stream = None
+    
+    if dept_counts:
         labels = [d[0] for d in dept_counts]
         values = [d[1] for d in dept_counts]
 
         labels.reverse()
         values.reverse()
-        
-        plt.figure(figsize=(10, 6))
-        bars = plt.barh(labels, values, color='#3b82f6', height=0.6)
-        
-        plt.xlabel('Количество заявок')
-        plt.title('Топ загруженных отделений')
-        plt.grid(axis='x', linestyle='--', alpha=0.5)
-        plt.tight_layout()
 
-        for bar in bars:
-            width = bar.get_width()
-            plt.text(width + 0.1, bar.get_y() + bar.get_height()/2, 
-                     f'{int(width)}', ha='left', va='center', fontweight='bold')
+        try:
+            loop = asyncio.get_running_loop()
 
-        buf = io.BytesIO()
-        plt.savefig(buf, format='png', dpi=100)
-        buf.seek(0)
-        plt.close()
-        return buf
+            photo_stream = await loop.run_in_executor(
+                process_pool, 
+                generate_plot_sync, 
+                labels, 
+                values
+            )
+        except Exception as e:
+            logger.error(f"Ошибка генерации графика: {e}")
+            pass
 
-    photo_stream = await asyncio.to_thread(create_plot)
+    try:
+        await msg.delete()
+    except:
+        pass
 
-    await msg.delete()
-    
     if photo_stream:
         await context.bot.send_photo(
             chat_id=user_id,
@@ -2213,12 +2349,127 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await context.bot.send_message(
             chat_id=user_id,
-            text=report_text + "\n(График не создан — нет данных по отделам)",
+            text=report_text + "\n\n(График не создан — нет данных по отделам)",
             parse_mode=ParseMode.HTML
         )
 
+async def stats_time_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in NOTIFY_CHAT_IDS:
+        return
+    
+    rows = await asyncio.to_thread(db_service.get_time_stats)
+    if not rows:
+        await update.message.reply_text("Нет данных о времени создания заявок.")
+        return
+
+    hours = [int(row['h']) for row in rows]
+    counts = [row[1] for row in rows]
+
+    msg = await update.message.reply_text("⏳ Рисую график по времени...")
+    
+    if process_pool is None:
+        await msg.edit_text("Ошибка пула процессов.")
+        return
+
+    loop = asyncio.get_running_loop()
+    photo_stream = await loop.run_in_executor(process_pool, generate_time_plot_sync, hours, counts)
+
+    await msg.delete()
+    await context.bot.send_photo(
+        chat_id=update.effective_chat.id,
+        photo=photo_stream,
+        caption="📈 <b>Нагрузка по часам</b>",
+        parse_mode=ParseMode.HTML
+    )
+
+async def stats_rating_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in NOTIFY_CHAT_IDS:
+        return
+
+    rows = await asyncio.to_thread(db_service.get_rating_stats)
+    if not rows:
+        await update.message.reply_text("Нет данных об оценках.")
+        return
+    labels = [f"{row['rating']}⭐" for row in rows]
+    clean_labels = [str(row['rating']) for row in rows] 
+    counts = [row[1] for row in rows]
+
+    msg = await update.message.reply_text("🍰 Рисую диаграмму удовлетворенности...")
+    
+    if process_pool is None:
+        await msg.edit_text("Ошибка пула процессов.")
+        return
+
+    loop = asyncio.get_running_loop()
+    photo_stream = await loop.run_in_executor(process_pool, generate_rating_plot_sync, clean_labels, counts)
+
+    await msg.delete()
+    await context.bot.send_photo(
+        chat_id=update.effective_chat.id,
+        photo=photo_stream,
+        caption="🍰 <b>Удовлетворенность пользователей</b>",
+        parse_mode=ParseMode.HTML
+    )
+
+
+
+async def assign_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    data = query.data 
+    app_id = data.split(":")[1]
+    tg_user = query.from_user
+    username = tg_user.username
+    if username and username in USERNAME_TO_FIO:
+        admin_name = USERNAME_TO_FIO[username]
+    else:
+        admin_name = f"@{username}" if username else tg_user.full_name
+    status, response_data = await api_client.assign_application(app_id, admin_name)
+
+    original_text = query.message.text_html or query.message.caption_html or ""
+
+    if status == "success":
+        await query.answer("✅ Вы взяли заявку!")
+        if "✅ Заявку принял:" not in original_text:
+            new_text = original_text + f"\n\n✅ <b>Заявку принял:</b> {admin_name}"
+            try:
+                if query.message.photo:
+                    await query.edit_message_caption(caption=new_text, parse_mode=ParseMode.HTML, reply_markup=None)
+                else:
+                    await query.edit_message_text(text=new_text, parse_mode=ParseMode.HTML, reply_markup=None)
+            except Exception:
+                pass
+        user_chat_id = response_data.get("user_chat_id")
+        
+        if user_chat_id:
+            try:
+                await context.bot.send_message(
+                    chat_id=user_chat_id,
+                    text=f"👨‍💻 Вашей заявкой <code>{app_id}</code> занимается: <b>{admin_name}</b>.",
+                    parse_mode=ParseMode.HTML
+                )
+            except Exception as e:
+                logger.error(f"Не удалось отправить уведомление пользователю {user_chat_id}: {e}")
+            
+    elif status == "already_taken":
+        current = response_data.get("current_assignee", "коллега")
+        await query.answer(f"❌ Заявку выполняет другой сотрудник: {current}", show_alert=True)
+        
+        if "✅ Заявку принял:" not in original_text:
+            new_text = original_text + f"\n\n✅ <b>Заявку принял:</b> {current}"
+            try:
+                if query.message.photo:
+                    await query.edit_message_caption(caption=new_text, parse_mode=ParseMode.HTML, reply_markup=None)
+                else:
+                    await query.edit_message_text(text=new_text, parse_mode=ParseMode.HTML, reply_markup=None)
+            except Exception:
+                pass
+                
+    else:
+        await query.answer("❌ Ошибка сервера или заявка не найдена.", show_alert=True)
+
 def main():
     my_persistence = PicklePersistence(filepath="bot_data.pickle")
+    db_service.check_and_add_assignee_column()
 
     application = Application.builder().token(TOKEN).persistence(my_persistence).build()
 
@@ -2364,6 +2615,8 @@ def main():
     application.add_handler(CommandHandler("r", request_password_command))
     application.add_handler(CommandHandler("b", broadcast_command))
     application.add_handler(CommandHandler("stats", stats_command))
+    application.add_handler(CommandHandler("time", stats_time_command))
+    application.add_handler(CommandHandler("rating", stats_rating_command))
 
     application.add_handler(
         CallbackQueryHandler(check_status_callback, pattern="^check_status:")
@@ -2373,6 +2626,9 @@ def main():
     )
     application.add_handler(
         CallbackQueryHandler(rate_handler, pattern="^rate:")
+    )
+    application.add_handler(
+        CallbackQueryHandler(assign_callback, pattern="^assign:")
     )
 
     application.add_handler(
@@ -2386,4 +2642,11 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    process_pool = ProcessPoolExecutor(max_workers=2)
+    try:
+        main()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if process_pool:
+            process_pool.shutdown(wait=True)

@@ -108,13 +108,36 @@ def init_db():
     )"""
     )
 
-    try:
-        db.execute("ALTER TABLE applications ADD COLUMN rating INTEGER DEFAULT 0")
-        print("Колонка rating добавлена в таблицу applications.")
-    except sqlite3.OperationalError:
-        pass
+    migrations = [
+        "ALTER TABLE applications ADD COLUMN rating INTEGER DEFAULT 0",
+        "ALTER TABLE applications ADD COLUMN assignee TEXT",
+        "ALTER TABLE applications ADD COLUMN difficulty TEXT DEFAULT 'low'"
+    ]
+
+    for sql in migrations:
+        try:
+            db.execute(sql)
+            print(f"Миграция успешна: {sql}")
+        except sqlite3.OperationalError:
+            pass
         
     db.commit()
+
+def repo_get_stats_time():
+    db = get_db()
+    cursor = db.execute("SELECT strftime('%H', created_at) as h, COUNT(*) FROM applications GROUP BY h ORDER BY h")
+    return [dict(row) for row in cursor.fetchall()]
+
+def repo_get_stats_rating():
+    db = get_db()
+    cursor = db.execute("SELECT rating, COUNT(*) as count FROM applications WHERE rating > 0 GROUP BY rating")
+    return [dict(row) for row in cursor.fetchall()]
+
+def repo_get_stats_assignee():
+    """Кто из админов сколько заявок закрыл."""
+    db = get_db()
+    cursor = db.execute("SELECT assignee, COUNT(*) as count FROM applications WHERE status='done' GROUP BY assignee")
+    return [dict(row) for row in cursor.fetchall()]
 
 
 def repo_update_staff_notes(app_db_id: int, notes: str):
@@ -748,6 +771,54 @@ def update_notes(app_id):
     notes = request.form.get("staff_notes")
     repo_update_staff_notes(app_id, notes)
     return redirect(request.referrer or url_for("get_active_applications"))
+
+@app.route("/api/stats/time", methods=["GET"])
+def api_stats_time():
+    data = repo_get_stats_time()
+    return jsonify(data), 200
+
+@app.route("/api/stats/rating", methods=["GET"])
+def api_stats_rating():
+    data = repo_get_stats_rating()
+    return jsonify(data), 200
+
+@app.route("/api/assign", methods=["POST"])
+def api_assign_user():
+    data = request.json
+    app_id = data.get("application_id")
+    admin_name = data.get("admin_name")
+    
+    if not app_id or not admin_name:
+        return jsonify({"error": "Missing data"}), 400
+        
+    db = get_db()
+
+    cursor = db.execute(
+        "UPDATE applications SET assignee = ? WHERE application_id = ? AND (assignee IS NULL OR assignee = '')",
+        (admin_name, app_id)
+    )
+    db.commit()
+
+    if cursor.rowcount > 0:
+        cur_user = db.execute("SELECT chat_id, name FROM applications WHERE application_id = ?", (app_id,))
+        row = cur_user.fetchone()
+        
+        return jsonify({
+            "status": "success",
+            "user_chat_id": row["chat_id"],
+            "user_name": row["name"]
+        }), 200
+
+    else:
+        cur_check = db.execute("SELECT assignee FROM applications WHERE application_id = ?", (app_id,))
+        row = cur_check.fetchone()
+        if row and row["assignee"]:
+            return jsonify({
+                "status": "already_taken", 
+                "current_assignee": row["assignee"]
+            }), 409
+            
+        return jsonify({"error": "Not found"}), 404
 
 
 if __name__ == "__main__":
