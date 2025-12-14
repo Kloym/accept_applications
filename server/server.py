@@ -13,22 +13,36 @@ from flask import (
     url_for,
     send_file,
     g,
+    session
 )
 import pandas as pd
 from io import BytesIO
 from math import ceil
+from functools import wraps
 
 DATABASE_FILE = "applications.db"
 UPLOAD_FOLDER_NAME = "uploads"
 BASE_DIR = os.path.dirname(__file__)
 UPLOAD_FOLDER_PATH = os.path.join(BASE_DIR, UPLOAD_FOLDER_NAME)
+API_SECRET = os.getenv("API_TOKEN", "hospital_secret_2025")
 
 app = Flask(__name__)
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER_PATH
 app.config["DATABASE"] = DATABASE_FILE
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
+app.secret_key = "super_secret_flask_key"
 
 PER_PAGE = 50
+
+def require_api_key(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        token = request.headers.get("Authorization")
+        if not token or token != f"Bearer {API_SECRET}":
+            return jsonify({"error": "Доступ запрещен. Неверный токен."}), 401
+            
+        return f(*args, **kwargs)
+    return decorated_function
 
 
 class FileService:
@@ -95,9 +109,11 @@ def init_db():
         difficulty TEXT DEFAULT 'low',
         staff_notes TEXT,
         solution TEXT,
-        rating INTEGER DEFAULT 0 
+        rating INTEGER DEFAULT 0,
+        assignee TEXT 
     )"""
     )
+
     db.execute(
         """CREATE TABLE IF NOT EXISTS messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -133,20 +149,12 @@ def repo_get_stats_rating():
     cursor = db.execute("SELECT rating, COUNT(*) as count FROM applications WHERE rating > 0 GROUP BY rating")
     return [dict(row) for row in cursor.fetchall()]
 
-def repo_get_stats_assignee():
-    """Кто из админов сколько заявок закрыл."""
-    db = get_db()
-    cursor = db.execute("SELECT assignee, COUNT(*) as count FROM applications WHERE status='done' GROUP BY assignee")
-    return [dict(row) for row in cursor.fetchall()]
-
-
 def repo_update_staff_notes(app_db_id: int, notes: str):
     db = get_db()
     db.execute(
         "UPDATE applications SET staff_notes = ? WHERE id = ?", (notes, app_db_id)
     )
     db.commit()
-
 
 def repo_create_application(data: dict):
     db = get_db()
@@ -170,9 +178,7 @@ def repo_create_application(data: dict):
     )
     db.commit()
 
-
 def repo_add_message(application_id, sender, text):
-    """Сохраняет сообщение сотрудника в БД."""
     db = get_db()
     db.execute(
         "INSERT INTO messages (application_id, sender, message_text) VALUES (?, ?, ?)",
@@ -181,14 +187,12 @@ def repo_add_message(application_id, sender, text):
     db.commit()
     
 def repo_save_rating(application_id: str, rating: int):
-    """Сохраняет оценку пользователя."""
     db = get_db()
     db.execute(
         "UPDATE applications SET rating = ? WHERE application_id = ?",
         (rating, application_id)
     )
     db.commit()
-
 
 def repo_restore_application(application_id: str):
     db = get_db()
@@ -207,14 +211,12 @@ def repo_restore_application(application_id: str):
     db.commit()
     return dict(row)
 
-
 def repo_set_difficulty(application_id: int, difficulty: str):
     db = get_db()
     db.execute(
         "UPDATE applications SET difficulty=? WHERE id=?", (difficulty, application_id)
     )
     db.commit()
-
 
 def repo_get_applications_paginated(status: str, page: int, per_page: int):
     db = get_db()
@@ -274,40 +276,29 @@ def repo_get_applications_paginated(status: str, page: int, per_page: int):
 
         if status == "done":
             manual_solution = app_data.get("solution")
-
             if manual_solution and "[ОТВЕТ ПОЛЬЗОВАТЕЛЯ]" in str(manual_solution):
                 manual_solution = None
 
             if not manual_solution:
                 cur_msgs = db.execute(
-                    """
-                    SELECT message_text FROM messages 
-                    WHERE application_id = ? 
-                    ORDER BY created_at DESC LIMIT 20
-                    """,
+                    """SELECT message_text FROM messages WHERE application_id = ? 
+                    ORDER BY created_at DESC LIMIT 20""",
                     (app_data["application_id"],),
                 )
                 messages = cur_msgs.fetchall()
-
                 found_text = None
                 for msg in messages:
                     text = msg["message_text"]
-
                     if "[ОТВЕТ ПОЛЬЗОВАТЕЛЯ]" not in text:
                         found_text = text
                         break
-
                 app_data["solution"] = found_text
 
         applications.append(app_data)
 
     return applications, total_pages
 
-
 def repo_get_comments_view():
-    """
-    Получает активные заявки + ВСЮ историю сообщений к ним.
-    """
     db = get_db()
     cur = db.execute(
         "SELECT application_id, name, department, details FROM applications WHERE status = 'active' ORDER BY created_at DESC"
@@ -320,21 +311,16 @@ def repo_get_comments_view():
             (app["application_id"],),
         )
         msgs = [dict(row) for row in cur_msgs.fetchall()]
-
         for m in msgs:
             try:
                 dt = datetime.strptime(m["created_at"], "%Y-%m-%d %H:%M:%S")
                 dt = dt + timedelta(hours=3)
-
                 m["created_at"] = dt.strftime("%d-%m %H:%M")
             except Exception as e:
-                print(f"Ошибка парсинга даты: {e}")
                 pass
-
         app["messages"] = msgs
 
     return apps
-
 
 def repo_get_raw_apps_for_export() -> list:
     db = get_db()
@@ -351,7 +337,6 @@ def repo_get_raw_apps_for_export() -> list:
     """
     cur = db.execute(query)
     return [dict(row) for row in cur.fetchall()]
-
 
 def repo_delete_application(application_id: int) -> list:
     db = get_db()
@@ -375,7 +360,6 @@ def repo_delete_application(application_id: int) -> list:
             pass
     return []
 
-
 def repo_delete_single_photo(app_id: int, filename_to_delete: str) -> bool:
     db = get_db()
     cur = db.execute("SELECT photos FROM applications WHERE id = ?", (app_id,))
@@ -398,10 +382,7 @@ def repo_delete_single_photo(app_id: int, filename_to_delete: str) -> bool:
     db.commit()
     return True
 
-
-def repo_append_photos(
-    application_id: str, username: str, new_filenames_list: list
-) -> bool:
+def repo_append_photos(application_id: str, username: str, new_filenames_list: list) -> bool:
     db = get_db()
     try:
         with db:
@@ -425,7 +406,6 @@ def repo_append_photos(
         print(f"Ошибка при batch-обновлении json: {e}")
         return False
 
-
 def repo_append_details(application_id: str, username: str, extra_text: str) -> bool:
     db = get_db()
     cur = db.execute(
@@ -445,8 +425,8 @@ def repo_append_details(application_id: str, username: str, extra_text: str) -> 
     return True
 
 @app.route('/rate_application', methods=['POST'])
+@require_api_key
 def rate_application():
-    """Сохраняет оценку (рейтинг) заявки."""
     data = request.json
     app_id = data.get('application_id')
     rating = data.get('rating')
@@ -462,41 +442,55 @@ def rate_application():
 
 
 @app.route("/api/add_message", methods=["POST"])
+@require_api_key
 def api_add_message():
-    """Сохранение сообщения от бота в базу."""
     data = request.get_json()
     if not data:
         return jsonify({"error": "No data"}), 400
-
     repo_add_message(data.get("application_id"), data.get("sender"), data.get("text"))
     return jsonify({"status": "ok"}), 200
 
 
-@app.route("/api/get_user_info_for_app/<app_id>", methods=["GET"])
-def api_get_user_info_for_app(app_id):
+@app.route("/api/assign", methods=["POST"])
+@require_api_key
+def api_assign_user():
+    data = request.json
+    app_id = data.get("application_id")
+    admin_name = data.get("admin_name")
+    
+    if not app_id or not admin_name:
+        return jsonify({"error": "Missing data"}), 400
+        
     db = get_db()
-    cur = db.execute(
-        "SELECT chat_id, name FROM applications WHERE application_id = ?", (app_id,)
+    cursor = db.execute(
+        "UPDATE applications SET assignee = ? WHERE application_id = ? AND (assignee IS NULL OR assignee = '')",
+        (admin_name, app_id)
     )
-    row = cur.fetchone()
-    if row:
-        return jsonify(dict(row)), 200
+    db.commit()
+
+    if cursor.rowcount > 0:
+        cur_user = db.execute("SELECT chat_id, name FROM applications WHERE application_id = ?", (app_id,))
+        row = cur_user.fetchone()
+        
+        return jsonify({
+            "status": "success",
+            "user_chat_id": row["chat_id"],
+            "user_name": row["name"]
+        }), 200
     else:
+        cur_check = db.execute("SELECT assignee FROM applications WHERE application_id = ?", (app_id,))
+        row = cur_check.fetchone()
+        if row and row["assignee"]:
+            return jsonify({
+                "status": "already_taken", 
+                "current_assignee": row["assignee"]
+            }), 409
+            
         return jsonify({"error": "Not found"}), 404
 
 
-@app.route("/api/get_app_ids_for_user/<chat_id>", methods=["GET"])
-def api_get_app_ids_for_user(chat_id):
-    db = get_db()
-    cur = db.execute(
-        "SELECT application_id FROM applications WHERE chat_id = ?", (chat_id,)
-    )
-    rows = cur.fetchall()
-    app_ids = [row["application_id"] for row in rows]
-    return jsonify(app_ids), 200
-
-
 @app.route("/applications", methods=["POST"])
+@require_api_key
 def add_application():
     data = request.get_json()
     if not data:
@@ -504,16 +498,13 @@ def add_application():
 
     application_id = data.get("application_id")
     file_paths = []
-
     attachments = data.get("attachments", [])
-
     if not attachments and data.get("photos"):
         attachments = [{"b64": p, "extension": "jpg"} for p in data.get("photos")]
 
     for idx, file_data in enumerate(attachments):
         photo_b64 = file_data.get("b64")
         extension = file_data.get("extension", "jpg").replace(".", "")
-
         if photo_b64:
             filename = f"{application_id}_{idx}.{extension}"
             saved_name = file_service.save_photo_from_b64(photo_b64, filename)
@@ -544,6 +535,7 @@ def add_application():
 
 
 @app.route("/restore/<application_id>", methods=["POST"])
+@require_api_key
 def restore_application(application_id):
     user_data = repo_restore_application(application_id)
     if not user_data:
@@ -552,11 +544,11 @@ def restore_application(application_id):
 
 
 @app.route("/update_photos", methods=["POST"])
+@require_api_key
 def update_photos():
     data = request.get_json()
     application_id = data.get("application_id")
     username = data.get("username")
-
     attachments = data.get("attachments", [])
     if not attachments and data.get("photos"):
         attachments = [{"b64": p, "extension": "jpg"} for p in data.get("photos")]
@@ -568,11 +560,9 @@ def update_photos():
     for idx, file_data in enumerate(attachments):
         photo_b64 = file_data.get("b64")
         extension = file_data.get("extension", "jpg").replace(".", "")
-
         filename = (
             f"{application_id}_upd_{int(datetime.now().timestamp())}_{idx}.{extension}"
         )
-
         saved_name = file_service.save_photo_from_b64(photo_b64, filename)
         if not saved_name:
             file_service.delete_photos(saved_names_list)
@@ -583,11 +573,11 @@ def update_photos():
     if not success:
         file_service.delete_photos(saved_names_list)
         return jsonify({"error": "Заявка не найдена или не принадлежит вам"}), 404
-
     return jsonify({"message": "Файлы добавлены"}), 200
 
 
 @app.route("/append_details", methods=["POST"])
+@require_api_key
 def append_details():
     data = request.get_json()
     application_id = data.get("application_id")
@@ -600,8 +590,52 @@ def append_details():
     success = repo_append_details(application_id, username, extra_text)
     if not success:
         return jsonify({"error": "Заявка не найдена или не принадлежит вам"}), 404
-
     return jsonify({"message": "Текст заявки дополнен"}), 200
+
+
+@app.route("/delete/<int:application_id>", methods=["POST"])
+@require_api_key
+def delete_application(application_id):
+    filenames_to_delete = repo_delete_application(application_id)
+    file_service.delete_photos(filenames_to_delete)
+    return redirect(request.referrer or url_for("get_archive"))
+
+
+@app.route("/api/stats/time", methods=["GET"])
+@require_api_key
+def api_stats_time():
+    data = repo_get_stats_time()
+    return jsonify(data), 200
+
+
+@app.route("/api/stats/rating", methods=["GET"])
+@require_api_key
+def api_stats_rating():
+    data = repo_get_stats_rating()
+    return jsonify(data), 200
+
+@app.route("/api/get_user_info_for_app/<app_id>", methods=["GET"])
+def api_get_user_info_for_app(app_id):
+    db = get_db()
+    cur = db.execute(
+        "SELECT chat_id, name FROM applications WHERE application_id = ?", (app_id,)
+    )
+    row = cur.fetchone()
+    if row:
+        return jsonify(dict(row)), 200
+    else:
+        return jsonify({"error": "Not found"}), 404
+
+
+@app.route("/api/get_app_ids_for_user/<chat_id>", methods=["GET"])
+def api_get_app_ids_for_user(chat_id):
+    db = get_db()
+    cur = db.execute(
+        "SELECT application_id FROM applications WHERE chat_id = ?", (chat_id,)
+    )
+    rows = cur.fetchall()
+    app_ids = [row["application_id"] for row in rows]
+    return jsonify(app_ids), 200
 
 
 @app.route("/", methods=["GET"])
@@ -635,7 +669,6 @@ def get_active_applications():
 
 @app.route("/comments")
 def comments_view():
-    """НОВЫЙ РОУТ: Лента сообщений по активным заявкам."""
     applications = repo_get_comments_view()
     return render_template("comments.html", applications=applications)
 
@@ -645,14 +678,12 @@ def get_archive():
     page = request.args.get("page", 1, type=int)
     if page < 1:
         page = 1
-
     applications, total_pages = repo_get_applications_paginated("done", page, PER_PAGE)
     if page > total_pages and total_pages > 0:
         page = total_pages
         applications, total_pages = repo_get_applications_paginated(
             "done", page, PER_PAGE
         )
-
     return render_template(
         "applications.html",
         applications=applications,
@@ -667,7 +698,6 @@ def set_difficulty(application_id):
     new_difficulty = request.form.get("difficulty")
     if new_difficulty not in ["low", "medium", "high", "naumen"]:
         return "Некорректное значение сложности", 400
-
     repo_set_difficulty(application_id, new_difficulty)
     return redirect(request.referrer or url_for("get_active_applications"))
 
@@ -679,31 +709,17 @@ def export_archive():
         return "Нет архивных заявок", 404
 
     df = pd.DataFrame(raw_rows)
-
     columns_to_export = [
-        "application_id",
-        "name",
-        "department",
-        "details",
-        "created_at",
-        "archived_at",
-        "done_by",
-        "solution",
-        "rating"
+        "application_id", "name", "department", "details",
+        "created_at", "archived_at", "done_by", "solution", "rating"
     ]
     available_columns = [c for c in columns_to_export if c in df.columns]
-
     df = df[available_columns]
     rename_map = {
-        "application_id": "ID",
-        "name": "ФИО",
-        "department": "Отделение",
-        "details": "Проблема",
-        "created_at": "Создание заявки",
-        "archived_at": "Дата выполнения",
-        "done_by": "Исполнитель",
-        "solution": "Решение",
-        "rating": "Оценка"
+        "application_id": "ID", "name": "ФИО", "department": "Отделение",
+        "details": "Проблема", "created_at": "Создание заявки",
+        "archived_at": "Дата выполнения", "done_by": "Исполнитель",
+        "solution": "Решение", "rating": "Оценка"
     }
     df = df.rename(columns=rename_map)
     for col in ["Создание заявки", "Дата выполнения"]:
@@ -721,7 +737,6 @@ def export_archive():
             worksheet.column_dimensions[column_cells[0].column_letter].width = min(
                 length + 2, 60
             )
-
     output.seek(0)
     return send_file(
         output,
@@ -729,13 +744,6 @@ def export_archive():
         download_name="archive.xlsx",
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
-
-
-@app.route("/delete/<int:application_id>", methods=["POST"])
-def delete_application(application_id):
-    filenames_to_delete = repo_delete_application(application_id)
-    file_service.delete_photos(filenames_to_delete)
-    return redirect(request.referrer or url_for("get_archive"))
 
 
 @app.route("/delete_photo/<int:app_id>/<path:filename>", methods=["POST"])
@@ -754,11 +762,9 @@ def delete_photo(app_id, filename):
 @app.route("/uploads/<filename>")
 def uploaded_file(filename):
     ext = filename.split(".")[-1].lower()
-
     image_extensions = ["jpg", "jpeg", "png", "gif", "webp", "bmp"]
     video_extensions = ["mp4", "mov", "avi", "webm", "mkv"]
     is_attachment = (ext not in image_extensions) and (ext not in video_extensions)
-
     return send_from_directory(
         app.config["UPLOAD_FOLDER"], 
         filename, 
@@ -772,57 +778,8 @@ def update_notes(app_id):
     repo_update_staff_notes(app_id, notes)
     return redirect(request.referrer or url_for("get_active_applications"))
 
-@app.route("/api/stats/time", methods=["GET"])
-def api_stats_time():
-    data = repo_get_stats_time()
-    return jsonify(data), 200
-
-@app.route("/api/stats/rating", methods=["GET"])
-def api_stats_rating():
-    data = repo_get_stats_rating()
-    return jsonify(data), 200
-
-@app.route("/api/assign", methods=["POST"])
-def api_assign_user():
-    data = request.json
-    app_id = data.get("application_id")
-    admin_name = data.get("admin_name")
-    
-    if not app_id or not admin_name:
-        return jsonify({"error": "Missing data"}), 400
-        
-    db = get_db()
-
-    cursor = db.execute(
-        "UPDATE applications SET assignee = ? WHERE application_id = ? AND (assignee IS NULL OR assignee = '')",
-        (admin_name, app_id)
-    )
-    db.commit()
-
-    if cursor.rowcount > 0:
-        cur_user = db.execute("SELECT chat_id, name FROM applications WHERE application_id = ?", (app_id,))
-        row = cur_user.fetchone()
-        
-        return jsonify({
-            "status": "success",
-            "user_chat_id": row["chat_id"],
-            "user_name": row["name"]
-        }), 200
-
-    else:
-        cur_check = db.execute("SELECT assignee FROM applications WHERE application_id = ?", (app_id,))
-        row = cur_check.fetchone()
-        if row and row["assignee"]:
-            return jsonify({
-                "status": "already_taken", 
-                "current_assignee": row["assignee"]
-            }), 409
-            
-        return jsonify({"error": "Not found"}), 404
-
 
 if __name__ == "__main__":
     with app.app_context():
         init_db()
-
     app.run(host="0.0.0.0", port=5000, debug=True)

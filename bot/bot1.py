@@ -47,6 +47,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("telegram.ext._application").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
+API_TOKEN = os.getenv("API_TOKEN", "hospital_secret_2025")
 TOKEN = os.getenv("TOKEN")
 BASE_SERVER_URL = "http://127.0.0.1:5000"
 DB_FILE = "applications.db"
@@ -158,9 +159,11 @@ class ApiService:
 
     async def _post_json(self, endpoint, data):
         url = f"{self.base_url}/{endpoint}"
+        headers = {"Authorization": f"Bearer hospital_secret_2025"} 
+        
         async with aiohttp.ClientSession() as session:
             try:
-                async with session.post(url, json=data) as response:
+                async with session.post(url, json=data, headers=headers) as response:
                     return response.status, await response.json()
             except aiohttp.ClientError as e:
                 logger.error(f"API ClientError: {e}")
@@ -825,14 +828,14 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⛔ У вас нет прав для рассылки.")
         return
 
-    message_to_send = " ".join(context.args)
-
-    if not message_to_send:
+    if not context.args:
         await update.message.reply_text(
-            "⚠️ Введите текст рассылки.\nПример: <code>/broadcast Внимание! Технические работы.</code>",
+            "⚠️ Введите текст рассылки.\nПример: <code>/b Внимание! Работы.</code>",
             parse_mode=ParseMode.HTML,
         )
         return
+
+    message_to_send = update.message.text.split(None, 1)[1]
 
     chat_ids = await asyncio.to_thread(db_service.get_all_chat_ids)
 
@@ -852,7 +855,7 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await context.bot.send_message(
                 chat_id=chat_id,
-                text=f"📢 <b>ОБЪЯВЛЕНИЕ</b>\n\n{message_to_send.capitalize()}",
+                text=f"📢 <b>ОБЪЯВЛЕНИЕ</b>\n\n{message_to_send}",
                 parse_mode=ParseMode.HTML,
             )
             success_count += 1
