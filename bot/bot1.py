@@ -57,7 +57,15 @@ if raw_admin_ids:
     NOTIFY_CHAT_IDS = [int(x.strip()) for x in raw_admin_ids.split(",") if x.strip().isdigit()]
 else:
     NOTIFY_CHAT_IDS = []
-    logger.warning("⚠️ В .env не указаны ADMIN_IDS! Рассылка и админка работать не будут.")
+    logger.warning("⚠️ В .env не указаны ADMIN_IDS!")
+
+raw_boss_ids = os.getenv("BOSS_IDS", "")
+if raw_boss_ids:
+    BOSS_CHAT_IDS = [int(x.strip()) for x in raw_boss_ids.split(",") if x.strip().isdigit()]
+else:
+    BOSS_CHAT_IDS = []
+
+ALL_PERMITTED_IDS = set(NOTIFY_CHAT_IDS + BOSS_CHAT_IDS)
 
 USERNAME_TO_FIO = {
     "pasheug": "Пашков Евгений Олегович",
@@ -824,8 +832,9 @@ async def restore_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if user_id not in NOTIFY_CHAT_IDS:
-        await update.message.reply_text("⛔ У вас нет прав для рассылки.")
+    
+    if user_id not in ALL_PERMITTED_IDS:
+        await update.message.reply_text("⛔ У вас нет прав для просмотра статистики.")
         return
 
     if not context.args:
@@ -2243,7 +2252,7 @@ async def conv_repeat_last_app(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if user_id not in NOTIFY_CHAT_IDS:
+    if user_id not in ALL_PERMITTED_IDS:
         await update.message.reply_text("⛔ У вас нет прав для просмотра статистики.")
         return
 
@@ -2357,7 +2366,10 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 async def stats_time_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in NOTIFY_CHAT_IDS:
+    user_id = update.effective_user.id
+
+    if user_id not in ALL_PERMITTED_IDS:
+        await update.message.reply_text("⛔ У вас нет прав для просмотра статистики.")
         return
     
     rows = await asyncio.to_thread(db_service.get_time_stats)
@@ -2386,7 +2398,10 @@ async def stats_time_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     )
 
 async def stats_rating_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in NOTIFY_CHAT_IDS:
+    user_id = update.effective_user.id
+
+    if user_id not in ALL_PERMITTED_IDS:
+        await update.message.reply_text("⛔ У вас нет прав для просмотра статистики.")
         return
 
     rows = await asyncio.to_thread(db_service.get_rating_stats)

@@ -4,6 +4,7 @@
 - Вписать все chat_id сотрудников через запятую без пробелов в .env
 - Включить первым сервер и посмотреть вывод print
 - Добавить в poetry matplotlib
+- Поменять Token на gkbbitbot в .env
 
 SELECT chat_id from applications where username = 'vitalyayastrebov';
 SELECT chat_id from applications where username = 'YriyVD';
