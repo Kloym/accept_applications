@@ -533,24 +533,25 @@
                     {% if not archive %}
                         <form method="post" action="/set_difficulty/{{ app.id }}">
                             <select name="difficulty" onchange="this.form.submit()"
-                                title="{% if app.difficulty == 'low' %}Среднее время: 1 день{% elif app.difficulty == 'medium' %}Среднее время: 3-5 дней{% elif app.difficulty == 'high' %}Среднее время: 7 и более дней{% elif app.difficulty == 'naumen' %}Статус: Наумен{% else %}—{% endif %}">
+                                title="{% if app.difficulty == 'low' %}Среднее время: 1 день{% elif app.difficulty == 'medium' %}Среднее время: 3-5 дней{% elif app.difficulty == 'high' %}Среднее время: 7 и более дней{% elif app.difficulty == 'naumen' %}Статус: Наумен{% elif app.difficulty == 'employee'%}Сотрудник мог решить проблему сам{% else %}—{% endif %}">
                                 <option value="low" {% if app.difficulty == 'low' %}selected{% endif %} title="Среднее время: 1 день">Низкий</option>
                                 <option value="medium" {% if app.difficulty == 'medium' %}selected{% endif %} title="Среднее время: 3-5 дней">Средний</option>
                                 <option value="high" {% if app.difficulty == 'high' %}selected{% endif %} title="Среднее время: 7 и более дней">Высокий</option>
                                 <option value="naumen" {% if app.difficulty == 'naumen' %}selected{% endif %} title="Время неизвестно">Наумен</option>
+                                <option value="employee" {% if app.difficulty == 'employee' %}selected{% endif %} title="Сотрудник мог решить проблему самостоятельно">Сотрудник</option>
                             </select>
                         </form>
                     {% else %}
                         {% if app.difficulty == 'low' %}
-                            Низкий
+                            <span class="badge bg-success">Низкий</span>
                         {% elif app.difficulty == 'medium' %}
-                            Средний
+                            <span class="badge bg-warning text-dark">Средний</span>
                         {% elif app.difficulty == 'high' %}
-                            Высокий
+                            <span class="badge bg-danger">Высокий</span>
                         {% elif app.difficulty == 'naumen' %}
-                            Наумен
-                        {% else %}
-                            <span style="color: #888;">—</span>
+                            <span class="badge bg-primary">Naumen</span>
+                        {% elif app.difficulty == 'employee' %}
+                            <span class="badge bg-secondary">Сотрудник</span>
                         {% endif %}
                     {% endif %}
                 </td>

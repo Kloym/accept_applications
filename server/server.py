@@ -186,6 +186,41 @@ def repo_add_message(application_id, sender, text):
     )
     db.commit()
     
+def repo_get_stats_complexity():
+    db = get_db()
+
+    cursor = db.execute("""
+        SELECT department, difficulty, COUNT(*) as count
+        FROM applications
+        WHERE department IS NOT NULL AND department != ''
+        GROUP BY department, difficulty
+    """)
+    rows = cursor.fetchall()
+
+    departments = sorted(list(set(row["department"] for row in rows)))
+
+    data_map = {
+        "low": [0] * len(departments),
+        "medium": [0] * len(departments),
+        "high": [0] * len(departments),
+        "naumen": [0] * len(departments),
+        "employee": [0] * len(departments)
+    }
+    
+    for row in rows:
+        dept = row["department"]
+        diff = row["difficulty"] or "low"
+        count = row["count"]
+        
+        if diff in data_map and dept in departments:
+            idx = departments.index(dept)
+            data_map[diff][idx] = count
+            
+    return {
+        "departments": departments,
+        "datasets": data_map
+    }
+
 def repo_save_rating(application_id: str, rating: int):
     db = get_db()
     db.execute(
@@ -542,6 +577,12 @@ def restore_application(application_id):
         return jsonify({"error": "Заявка не найдена"}), 404
     return jsonify(user_data), 200
 
+@app.route("/api/stats/complexity", methods=["GET"])
+@require_api_key
+def api_stats_complexity():
+    data = repo_get_stats_complexity()
+    return jsonify(data), 200
+
 
 @app.route("/update_photos", methods=["POST"])
 @require_api_key
@@ -696,8 +737,9 @@ def get_archive():
 @app.route("/set_difficulty/<int:application_id>", methods=["POST"])
 def set_difficulty(application_id):
     new_difficulty = request.form.get("difficulty")
-    if new_difficulty not in ["low", "medium", "high", "naumen"]:
+    if new_difficulty not in ["low", "medium", "high", "naumen", "employee"]:
         return "Некорректное значение сложности", 400
+    
     repo_set_difficulty(application_id, new_difficulty)
     return redirect(request.referrer or url_for("get_active_applications"))
 

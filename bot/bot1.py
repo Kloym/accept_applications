@@ -32,6 +32,7 @@ import os
 from op import DEPARTMENTS, DEPARTMENTS_PER_PAGE
 import io
 import matplotlib.pyplot as plt
+import numpy as np
 from collections import Counter
 import matplotlib
 matplotlib.use('Agg')
@@ -72,6 +73,22 @@ USERNAME_TO_FIO = {
     "NRiskin": "Рискин Никита Дмитриевич",
     "kloym": "Сергеев Алексей Андреевич",
 }
+
+def get_main_keyboard(user_id=None):
+    keyboard = [
+        [KeyboardButton("📝 Новая заявка"), KeyboardButton("🔄 Повторить последнюю заявку")],
+        [
+            KeyboardButton("Проверить статус заявки"),
+            KeyboardButton("Вернуть заявку в работу"),
+            KeyboardButton("Дополнить заявку"),
+        ],
+        [KeyboardButton("Добавить фото"), KeyboardButton("📚 Инструкция")],
+    ]
+
+    if user_id and user_id in BOSS_CHAT_IDS:
+        keyboard.append([KeyboardButton("📊 Статистика")])
+
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 def generate_time_plot_sync(hours: list, counts: list) -> io.BytesIO:
     """Рисует график активности по часам."""
@@ -139,6 +156,62 @@ def generate_plot_sync(labels: list, values: list) -> io.BytesIO:
     
     return buf
 
+def draw_complexity_chart(data):
+    departments = data['departments']
+    datasets = data['datasets']
+
+    if not departments:
+        return None
+
+    colors = {
+        "employee": "#808080", 
+        "low": "#28a745",    
+        "medium": "#ffc107",   
+        "high": "#dc3545",    
+        "naumen": "#007bff"   
+    }
+    
+    labels = {
+        "employee": "Мог решить самостоятельно",
+        "low": "Низкая",
+        "medium": "Средняя",
+        "high": "Высокая",
+        "naumen": "Наумен"
+    }
+
+    stack_order = ["employee", "low", "medium", "high", "naumen"]
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    bottom = np.zeros(len(departments))
+
+    for status in stack_order:
+        values = datasets.get(status, [])
+        if not values:
+            continue
+            
+        ax.bar(
+            departments, 
+            values, 
+            bottom=bottom, 
+            label=labels[status], 
+            color=colors[status]
+        )
+        bottom += np.array(values)
+
+    ax.set_title('Сложность заявок по отделениям')
+    ax.legend()
+
+    plt.xticks(rotation=45, ha='right')
+    plt.tight_layout()
+
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png')
+    buf.seek(0)
+    plt.close(fig)
+    
+    return buf
+
 class States(Enum):
     START_ROUTES = 0
     START_WAIT_NAME = 1
@@ -197,6 +270,16 @@ class ApiService:
     async def post_new_application(self, data):
         status, _ = await self._post_json("applications", data)
         return status == 201
+    
+    async def get_stats_complexity(self):
+        url = f"{self.base_url}/api/stats/complexity"
+        headers = {"Authorization": f"Bearer {os.getenv('API_TOKEN', 'hospital_secret_2025')}"}
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers) as response:
+                if response.status == 200:
+                    return await response.json()
+                return None
 
     async def update_photos(self, application_id, username, attachments_list):
         data = {
@@ -477,19 +560,6 @@ db_service = DbService(DB_FILE)
 BTN_CANCEL = "❌ Отменить действие"
 BTN_BACK = "⬅️ Вернуться к предыдущему шагу"
 
-MAIN_KEYBOARD = ReplyKeyboardMarkup(
-    [
-        [KeyboardButton("📝 Новая заявка"), KeyboardButton("🔄 Повторить последнюю заявку")],
-        [
-            KeyboardButton("Проверить статус заявки"),
-            KeyboardButton("Вернуть заявку в работу"),
-            KeyboardButton("Дополнить заявку"),
-        ],
-        [KeyboardButton("Добавить фото"), KeyboardButton("📚 Инструкция")],
-    ],
-    resize_keyboard=True,
-)
-
 CANCEL_KEYBOARD = ReplyKeyboardMarkup(
     [[KeyboardButton(BTN_CANCEL)]], resize_keyboard=True, is_persistent=True
 )
@@ -574,6 +644,7 @@ def get_departments_inline_keyboard(page=0, filter_letter=None, saved_dep=None):
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
     start_text = (
         "<b>Что умеет этот бот?</b>\n\n"
         "Этот бот предназначен для быстрой и удобной подачи заявок в техническую поддержку КИС ЕМИАС.\n\n"
@@ -593,7 +664,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Если где-то при заполнении заявки возникает ошибка пропишите в чат /start"
     )
     await update.message.reply_text(
-        start_text, reply_markup=MAIN_KEYBOARD, parse_mode=ParseMode.HTML
+        start_text, reply_markup=get_main_keyboard(user_id), parse_mode=ParseMode.HTML
     )
     return ConversationHandler.END
 
@@ -1495,6 +1566,7 @@ async def conv_save_edited_details(update: Update, context: ContextTypes.DEFAULT
 
 
 async def conv_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
     query = update.callback_query
     if query:
         await query.answer()
@@ -1544,7 +1616,7 @@ async def conv_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(
             chat_id,
             "❌ Ошибка при отправке заявки на сервер. Попробуйте позже.",
-            reply_markup=MAIN_KEYBOARD,
+            reply_markup=get_main_keyboard(user_id),
         )
         return ConversationHandler.END
 
@@ -1555,7 +1627,7 @@ async def conv_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     await context.bot.send_message(
-        chat_id, final_text, parse_mode=ParseMode.HTML, reply_markup=MAIN_KEYBOARD
+        chat_id, final_text, parse_mode=ParseMode.HTML, reply_markup=get_main_keyboard(user_id)
     )
 
     admin_markup = InlineKeyboardMarkup([
@@ -1687,17 +1759,18 @@ async def conv_process_update_photo_add(
 async def conv_process_update_photo_done(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ):
+    user_id = update.effective_user.id
     app_id = context.user_data.get("update_id")
     attachments = context.user_data.get("update_attachments", [])
 
     if not attachments:
         await update.message.reply_text(
-            "Файлы не были отправлены.", reply_markup=MAIN_KEYBOARD
+            "Файлы не были отправлены.", reply_markup=get_main_keyboard(user_id)
         )
         context.user_data.clear()
         return ConversationHandler.END
 
-    await update.message.reply_text("Загрузка...", reply_markup=MAIN_KEYBOARD)
+    await update.message.reply_text("Загрузка...", reply_markup=get_main_keyboard(user_id))
     if await api_client.update_photos(
         app_id, update.effective_user.username, attachments
     ):
@@ -1774,17 +1847,18 @@ async def conv_ask_append_text(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def conv_process_append_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
     app_id = context.user_data.get("append_id")
     text = update.message.text.strip()
     if await api_client.append_details(app_id, update.effective_user.username, text):
         await update.message.reply_text(
             f"<b>✅ Текст успешно добавлен к заявке <code>{app_id}</code>!</b>",
             parse_mode=ParseMode.HTML,
-            reply_markup=MAIN_KEYBOARD,
+            reply_markup=get_main_keyboard(user_id),
         )
     else:
         await update.message.reply_text(
-            "❌ Ошибка (заявка не найдена).", reply_markup=MAIN_KEYBOARD
+            "❌ Ошибка (заявка не найдена).", reply_markup=get_main_keyboard(user_id)
         )
     context.user_data.clear()
     return ConversationHandler.END
@@ -1801,7 +1875,7 @@ async def conv_ask_check_status(
         if should_edit:
             await update.callback_query.edit_message_text(text, reply_markup=None)
         else:
-            await update.message.reply_text(text, reply_markup=MAIN_KEYBOARD)
+            await update.message.reply_text(text, reply_markup=get_main_keyboard(user_id))
         return ConversationHandler.END
 
     keyboard = []
@@ -1872,6 +1946,7 @@ async def check_status_callback(update: Update, context: ContextTypes.DEFAULT_TY
             "medium": "3-5 дней",
             "high": "7 и более дней",
             "naumen": "Передано разработчикам",
+            "employee": "Сотрудник мог решить проблему самостоятельно"
         }
         est_time = time_estimates.get(difficulty, "1 день")
 
@@ -1940,6 +2015,7 @@ async def conv_process_return_reason(
     app_id = context.user_data.get("return_id")
     username = update.effective_user.username or f"user_{update.effective_user.id}"
     user_info = await asyncio.to_thread(db_service.get_user_info_for_app, app_id)
+    user_id = update.effective_user.id
 
     if user_info:
         _, name_from_db = user_info
@@ -1967,7 +2043,7 @@ async def conv_process_return_reason(
         f"✅ <b>Ваш запрос на возврат заявки <code>{app_id}</code> отправлен специалистам.</b>\n\n"
         f"Они рассмотрят причину и, при необходимости, вернут заявку в работу. Вы получите отдельное уведомление.",
         parse_mode=ParseMode.HTML,
-        reply_markup=MAIN_KEYBOARD,
+        reply_markup=get_main_keyboard(user_id),
     )
 
     context.user_data.clear()
@@ -1995,6 +2071,7 @@ async def reply_to_admin_callback(update: Update, context: ContextTypes.DEFAULT_
 async def process_reply_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     app_id = context.user_data.get("reply_app_id")
     username = update.effective_user.username or "Пользователь"
+    user_id = update.effective_user.id
 
     message_text = ""
     file_id = None
@@ -2052,7 +2129,7 @@ async def process_reply_text(update: Update, context: ContextTypes.DEFAULT_TYPE)
             logger.error(f"Не удалось переслать ответ админу {admin_id}: {e}")
 
     await update.message.reply_text(
-        "✅ Ваш ответ отправлен.", reply_markup=MAIN_KEYBOARD
+        "✅ Ваш ответ отправлен.", reply_markup=get_main_keyboard(user_id)
     )
 
     try:
@@ -2069,6 +2146,7 @@ async def process_reply_text(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
     saved_name = context.user_data.get("saved_name")
     saved_ip = context.user_data.get("saved_ip")
     saved_dep = context.user_data.get("saved_department")
@@ -2089,11 +2167,11 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(
             chat_id=update.effective_user.id,
             text="Вы в главном меню.",
-            reply_markup=MAIN_KEYBOARD,
+            reply_markup=get_main_keyboard(user_id),
         )
     else:
         await update.message.reply_text(
-            "Действие отменено.", reply_markup=MAIN_KEYBOARD
+            "Действие отменено.", reply_markup=get_main_keyboard(user_id)
         )
 
     return ConversationHandler.END
@@ -2114,7 +2192,7 @@ async def handle_unknown_message(update: Update, context: ContextTypes.DEFAULT_T
         "Пожалуйста, используйте кнопки меню для работы с ботом.\n"
         "Если меню пропало, отправьте команду <i>/start</i>",
         parse_mode=ParseMode.HTML,
-        reply_markup=MAIN_KEYBOARD,
+        reply_markup=get_main_keyboard(user_id),
     )
 
 
@@ -2164,6 +2242,7 @@ async def conv_password_start_cb(update: Update, context: ContextTypes.DEFAULT_T
 
 
 async def conv_password_receive(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
     pwd = update.message.text
     app_id = context.user_data.pop("app_id_for_password", None)
     try:
@@ -2172,7 +2251,7 @@ async def conv_password_receive(update: Update, context: ContextTypes.DEFAULT_TY
         pass
     await update.message.reply_text(
         "✅ Спасибо, пароль принят и будет немедленно доставлен сотруднику.",
-        reply_markup=MAIN_KEYBOARD,
+        reply_markup=get_main_keyboard(user_id),
     )
     emp_id = context.bot_data.pop(app_id, None)
     if emp_id:
@@ -2252,11 +2331,11 @@ async def conv_repeat_last_app(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if user_id not in ALL_PERMITTED_IDS:
+    if user_id not in BOSS_CHAT_IDS:
         await update.message.reply_text("⛔ У вас нет прав для просмотра статистики.")
         return
 
-    msg = await update.message.reply_text("📊 Анализирую базу данных и рисую график...")
+    msg = await update.effective_message.reply_text("📊 Анализирую базу данных и рисую график...")
 
     rows = await asyncio.to_thread(db_service.get_statistics_data)
     if not rows:
@@ -2368,7 +2447,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def stats_time_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
-    if user_id not in ALL_PERMITTED_IDS:
+    if user_id not in BOSS_CHAT_IDS:
         await update.message.reply_text("⛔ У вас нет прав для просмотра статистики.")
         return
     
@@ -2380,7 +2459,7 @@ async def stats_time_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     hours = [int(row['h']) for row in rows]
     counts = [row[1] for row in rows]
 
-    msg = await update.message.reply_text("⏳ Рисую график по времени...")
+    msg = await update.effective_message.reply_text("⏳ Рисую график по времени...")
     
     if process_pool is None:
         await msg.edit_text("Ошибка пула процессов.")
@@ -2400,7 +2479,7 @@ async def stats_time_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def stats_rating_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
-    if user_id not in ALL_PERMITTED_IDS:
+    if user_id not in BOSS_CHAT_IDS:
         await update.message.reply_text("⛔ У вас нет прав для просмотра статистики.")
         return
 
@@ -2412,7 +2491,7 @@ async def stats_rating_command(update: Update, context: ContextTypes.DEFAULT_TYP
     clean_labels = [str(row['rating']) for row in rows] 
     counts = [row[1] for row in rows]
 
-    msg = await update.message.reply_text("🍰 Рисую диаграмму удовлетворенности...")
+    msg = await update.effective_message.reply_text("🍰 Рисую диаграмму удовлетворенности...")
     
     if process_pool is None:
         await msg.edit_text("Ошибка пула процессов.")
@@ -2428,6 +2507,31 @@ async def stats_rating_command(update: Update, context: ContextTypes.DEFAULT_TYP
         caption="🍰 <b>Удовлетворенность пользователей</b>",
         parse_mode=ParseMode.HTML
     )
+
+async def complexity_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+
+    msg = await update.effective_message.reply_text("📊 Загружаю статистику...")
+
+    data = await api_client.get_stats_complexity()
+    
+    if not data or not data.get("departments"):
+        await msg.edit_text("❌ Нет данных для статистики.")
+        return
+
+    photo_file = await asyncio.to_thread(draw_complexity_chart, data)
+
+    if photo_file:
+
+        await update.effective_message.reply_photo(
+            photo=photo_file, 
+            caption="📈 <b>Статистика сложности по отделениям</b>\n\n"
+                    "🟢 Низкая\n🟡 Средняя\n🔴 Высокая\n🔵 Наумен\n🔘 Мог решить самостоятельно",
+            parse_mode=ParseMode.HTML
+        )
+        await msg.delete()
+    else:
+        await msg.edit_text("❌ Ошибка при генерации графика.")
 
 
 
@@ -2484,6 +2588,49 @@ async def assign_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
     else:
         await query.answer("❌ Ошибка сервера или заявка не найдена.", show_alert=True)
+
+async def handle_stats_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отправляет инлайн-кнопки с выбором статистики."""
+    user_id = update.effective_user.id
+    if user_id not in BOSS_CHAT_IDS:
+        await update.message.reply_text("⛔ У вас нет прав для просмотра статистики.")
+        return
+
+    keyboard = [
+        [
+            InlineKeyboardButton("📈 Общая", callback_data="run_stat:general"),
+            InlineKeyboardButton("⏳ По времени", callback_data="run_stat:time")
+        ],
+        [
+            InlineKeyboardButton("⭐ Рейтинг", callback_data="run_stat:rating"),
+            InlineKeyboardButton("📊 Сложность", callback_data="run_stat:complex")
+        ],
+        [InlineKeyboardButton("❌ Закрыть", callback_data="run_stat:close")]
+    ]
+    
+    await update.message.reply_text(
+        "📊 <b>Панель статистики</b>\nВыберите нужный отчет:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode=ParseMode.HTML
+    )
+
+async def stats_router_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Маршрутизатор: перенаправляет нажатие кнопки на нужную функцию."""
+    query = update.callback_query
+    await query.answer()
+    
+    data = query.data
+
+    if data == "run_stat:general":
+        await stats_command(update, context)
+    elif data == "run_stat:time":
+        await stats_time_command(update, context)
+    elif data == "run_stat:rating":
+        await stats_rating_command(update, context)
+    elif data == "run_stat:complex":
+        await complexity_command(update, context)
+    elif data == "run_stat:close":
+        await query.delete_message()
 
 def main():
     my_persistence = PicklePersistence(filepath="bot_data.pickle")
@@ -2635,6 +2782,7 @@ def main():
     application.add_handler(CommandHandler("stats", stats_command))
     application.add_handler(CommandHandler("time", stats_time_command))
     application.add_handler(CommandHandler("rating", stats_rating_command))
+    application.add_handler(CommandHandler("complex", complexity_command))
 
     application.add_handler(
         CallbackQueryHandler(check_status_callback, pattern="^check_status:")
@@ -2647,6 +2795,12 @@ def main():
     )
     application.add_handler(
         CallbackQueryHandler(assign_callback, pattern="^assign:")
+    )
+    application.add_handler(
+        CallbackQueryHandler(stats_router_callback, pattern="^run_stat:")
+    )
+    application.add_handler(
+        MessageHandler(filters.Text("📊 Статистика"), handle_stats_request)
     )
 
     application.add_handler(
