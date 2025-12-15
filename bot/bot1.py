@@ -5,8 +5,9 @@ import sqlite3
 import uuid
 import re
 import asyncio
+import json
 from enum import Enum
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from telegram import (
     Update,
     ReplyKeyboardMarkup,
@@ -52,6 +53,7 @@ API_TOKEN = os.getenv("API_TOKEN", "hospital_secret_2025")
 TOKEN = os.getenv("TOKEN")
 BASE_SERVER_URL = "http://127.0.0.1:5000"
 DB_FILE = "applications.db"
+BACKUP_FILE = "pending_applications.json"
 DEPARTMENTS = sorted(DEPARTMENTS)
 raw_admin_ids = os.getenv("ADMIN_IDS", "")
 if raw_admin_ids:
@@ -73,6 +75,26 @@ USERNAME_TO_FIO = {
     "NRiskin": "Рискин Никита Дмитриевич",
     "kloym": "Сергеев Алексей Андреевич",
 }
+
+def save_to_backup(data_dict):
+    """Сохраняет заявку локально, если сервер недоступен."""
+    try:
+        current_data = []
+        if os.path.exists(BACKUP_FILE):
+            with open(BACKUP_FILE, "r", encoding="utf-8") as f:
+                try:
+                    current_data = json.load(f)
+                except json.JSONDecodeError:
+                    current_data = []
+        data_dict["saved_at_local"] = str(datetime.now())
+        current_data.append(data_dict)
+
+        with open(BACKUP_FILE, "w", encoding="utf-8") as f:
+            json.dump(current_data, f, ensure_ascii=False, indent=4)
+            
+        print(f"⚠️ [OFFLINE MODE] Заявка {data_dict.get('application_id')} сохранена локально.")
+    except Exception as e:
+        print(f"🔥 КРИТИЧЕСКАЯ ОШИБКА СОХРАНЕНИЯ РЕЗЕРВА: {e}")
 
 def get_main_keyboard(user_id=None):
     keyboard = [
@@ -420,11 +442,11 @@ class DbService:
         conn = self._get_db()
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT chat_id, name FROM applications WHERE application_id = ?", (app_id,)
+            "SELECT chat_id, name, status FROM applications WHERE application_id = ?", (app_id,)
         )
         row = cursor.fetchone()
         conn.close()
-        return (row["chat_id"], row["name"]) if row else None
+        return (row["chat_id"], row["name"], row["status"]) if row else None
 
     def get_all_chat_ids(self):
         conn = self._get_db()
@@ -713,11 +735,7 @@ async def finish_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if reply_message.photo:
             file_id = reply_message.photo[-1].file_id
             file_type = "photo"
-        elif (
-            reply_message.document
-            and reply_message.document.mime_type
-            and reply_message.document.mime_type.startswith("image/")
-        ):
+        elif reply_message.document:
             file_id = reply_message.document.file_id
             file_type = "document"
 
@@ -807,11 +825,7 @@ async def whisper_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if reply_message.photo:
             file_id = reply_message.photo[-1].file_id
             file_type = "photo"
-        elif (
-            reply_message.document
-            and reply_message.document.mime_type
-            and reply_message.document.mime_type.startswith("image/")
-        ):
+        elif reply_message.document:
             file_id = reply_message.document.file_id
             file_type = "document"
 
@@ -820,7 +834,15 @@ async def whisper_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Заявка {app_id} не найдена.")
         return
 
-    chat_id, name = result
+    chat_id, name, status = result
+    if status == 'done':
+        await update.message.reply_text(
+            f"⛔ <b>Ошибка! Заявка {app_id} уже закрыта.</b>\n"
+            "Нельзя писать сообщения в выполненные заявки.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
     sender = update.effective_user.username or "Сотрудник"
     solution_text = (
         f"\n\n<b>Решение:</b>\n{message_text.capitalize()}" if message_text else ""
@@ -1565,13 +1587,15 @@ async def conv_save_edited_details(update: Update, context: ContextTypes.DEFAULT
     return await conv_show_confirmation(update, context)
 
 
+
 async def conv_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     query = update.callback_query
+    
     if query:
         await query.answer()
         await query.edit_message_text(
-            "⏳ Отправка заявки на сервер...", reply_markup=None
+            "⏳ Обработка заявки...", reply_markup=None
         )
 
     app_id = str(uuid.uuid4())[:8]
@@ -1587,15 +1611,53 @@ async def conv_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "status": "active",
     }
 
-    success = await api_client.post_new_application(data)
+    server_online = False
+    try:
+        success = await api_client.post_new_application(data)
+        if success:
+            server_online = True
+    except Exception as e:
+        print(f"❌ Ошибка соединения с сервером API: {e}")
+        server_online = False
+    
+    final_text = ""
+    
+    if server_online:
+        final_text = (
+            f"<b>✅ Ваша заявка принята в работу!</b>\n"
+            f"Уникальный идентификатор заявки: <code>{app_id}</code>\n"
+        )
 
-    msg_admin = (
-        f"🔔 <b>Новая заявка!</b> 🔔\n\n"
-        f"<b>ID:</b> <code>{app_id}</code>\n"
-        f"<b>От:</b> {data['name']}\n"
-        f"<b>Файлов:</b> {len(data['attachments'])} шт.\n"
-        f"<b>Описание:</b>\n{data['details'][:40]}..."
-    )
+        msg_admin = (
+            f"🔔 <b>Новая заявка!</b> 🔔\n\n"
+            f"<b>ID:</b> <code>{app_id}</code>\n"
+            f"<b>От:</b> {data['name']}\n"
+            f"<b>Файлов:</b> {len(data['attachments'])} шт.\n"
+            f"<b>Описание:</b>\n{data['details'][:40]}..."
+        )
+
+        admin_markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🙋‍♂️ Взять в работу", callback_data=f"assign:{app_id}")]
+        ])
+
+        for nid in NOTIFY_CHAT_IDS:
+            try:
+                await context.bot.send_message(
+                    nid, 
+                    msg_admin, 
+                    parse_mode=ParseMode.HTML, 
+                    reply_markup=admin_markup
+                )
+            except:
+                pass
+                
+    else:
+        final_text = (
+            f"⚠️ <b>Связь с сервером временно недоступна.</b>\n\n"
+            f"💾 Но не волнуйтесь! <b>Я сохранил вашу заявку локально.</b>\n"
+            f"Как только связь восстановится, я автоматически передам её специалистам.\n"
+            f"Ваш временный номер заявки: <code>{app_id}</code>\n"
+        )
 
     saved_name = context.user_data.get("name")
     saved_ip = context.user_data.get("ip_address")
@@ -1603,47 +1665,47 @@ async def conv_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data.clear()
 
-    if saved_name:
-        context.user_data["saved_name"] = saved_name
-    if saved_ip:
-        context.user_data["saved_ip"] = saved_ip
-    if saved_dep:
-        context.user_data["saved_department"] = saved_dep
+    if saved_name: context.user_data["saved_name"] = saved_name
+    if saved_ip: context.user_data["saved_ip"] = saved_ip
+    if saved_dep: context.user_data["saved_department"] = saved_dep
+
+    moscow_tz = timezone(timedelta(hours=3))
+    now = datetime.now(moscow_tz)
+    wd = now.weekday()
+    h = now.hour
+    m = now.minute
+    
+    is_weekend_time = False
+    if wd == 4 and (h > 16 or (h == 16 and m >= 30)):
+        is_weekend_time = True
+    elif wd in [5, 6]:
+        is_weekend_time = True
+    elif wd == 0 and (h < 8 or (h == 8 and m < 30)):
+        is_weekend_time = True
+
+    if is_weekend_time:
+        final_text += (
+            "\n⚠️ <b>Обратите внимание!</b>\n"
+            "Сейчас в отделе техподдержки КИС ЕМИАС нерабочее время (Пт 16:30 — Пн 08:30).\n"
+            "Специалисты приступят к решению вашей задачи в ближайшее рабочее время.\n\n"
+            "🆘 <b>Если проблема требует срочного решения:</b>\n"
+            "Обратитесь в круглосуточную поддержку: <code>+7(465)870-35-99</code>\n\n"
+            "<i>С уважением, Техническая поддержка.</i>"
+        )
+    else:
+        if server_online:
+            final_text += "\nЧтобы подать новую заявку, нажмите Новая Заявка."
+        else:
+            final_text += "\n<i>Мы уже работаем над восстановлением связи.</i>"
 
     chat_id = update.effective_user.id
-
-    if not success:
-        await context.bot.send_message(
-            chat_id,
-            "❌ Ошибка при отправке заявки на сервер. Попробуйте позже.",
-            reply_markup=get_main_keyboard(user_id),
-        )
-        return ConversationHandler.END
-
-    final_text = (
-        f"<b>✅ Ваша заявка принята в работу!</b>\n"
-        f"Уникальный идентификатор заявки: <code>{app_id}</code>\n\n"
-        "Чтобы подать новую заявку, нажмите Новая Заявка."
-    )
-
-    await context.bot.send_message(
+    sent_message = await context.bot.send_message(
         chat_id, final_text, parse_mode=ParseMode.HTML, reply_markup=get_main_keyboard(user_id)
     )
 
-    admin_markup = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🙋‍♂️ Взять в работу", callback_data=f"assign:{app_id}")]
-    ])
-
-    for nid in NOTIFY_CHAT_IDS:
-        try:
-            await context.bot.send_message(
-                nid, 
-                msg_admin, 
-                parse_mode=ParseMode.HTML,
-                reply_markup=admin_markup
-            )
-        except:
-            pass
+    if not server_online:
+        data["offline_message_id"] = sent_message.message_id
+        save_to_backup(data)
 
     return ConversationHandler.END
 
@@ -2632,11 +2694,96 @@ async def stats_router_callback(update: Update, context: ContextTypes.DEFAULT_TY
     elif data == "run_stat:close":
         await query.delete_message()
 
+async def retry_sender_loop(bot):
+    while True:
+        await asyncio.sleep(40)
+        
+        if not os.path.exists(BACKUP_FILE):
+            continue
+
+        try:
+            with open(BACKUP_FILE, "r", encoding="utf-8") as f:
+                pending_data = json.load(f)
+        except Exception as e:
+            logger.error(f"Ошибка чтения backup файла: {e}")
+            continue
+
+        if not pending_data:
+            continue
+            
+        print(f"🔄 Найдено {len(pending_data)} неотправленных заявок. Пробую отправить...")
+        still_failed = []
+        something_changed = False 
+
+        for application in pending_data:
+            try:
+                success = await api_client.post_new_application(application) 
+
+                if success:
+                    something_changed = True
+                    app_id = application.get('application_id')
+                    print(f"✅ Заявка {app_id} из резерва отправлена на сервер!")
+                    raw_chat_id = application.get("chat_id")
+                    raw_msg_id = application.get("offline_message_id")
+                    
+                    chat_id = int(raw_chat_id) if raw_chat_id else None
+                    msg_id = int(raw_msg_id) if raw_msg_id else None
+                    
+                    final_text = (
+                        f"✅ <b>Заявка успешно передана специалистам!</b>\n"
+                        f"Спасибо за ожидание, связь восстановлена.\n\n"
+                        f"🆔 Уникальный ID заявки: <code>{app_id}</code>"
+                    )
+
+                    if chat_id:
+                        message_edited = False
+                        if msg_id:
+                            try:
+                                await bot.edit_message_text(
+                                    chat_id=chat_id,
+                                    message_id=msg_id,
+                                    text=final_text,
+                                    parse_mode=ParseMode.HTML
+                                )
+                                message_edited = True
+                                print(f"✨ Сообщение {msg_id} успешно отредактировано.")
+                            except Exception as e:
+                                logger.error(f"⚠️ Ошибка редактирования (id={msg_id}): {e}")
+                        if not message_edited:
+                            print(f"📨 Отправляю новое сообщение для {chat_id}, так как редактирование не удалось.")
+                            try:
+                                await bot.send_message(
+                                    chat_id=chat_id,
+                                    text=final_text,
+                                    parse_mode=ParseMode.HTML
+                                )
+                            except Exception as e2:
+                                logger.error(f"❌ Не удалось отправить даже новое сообщение пользователю {chat_id}: {e2}")
+                else:
+                    print(f"⚠️ Сервер API вернул ошибку для заявки {application.get('application_id')}, пробуем позже.")
+                    still_failed.append(application)
+
+            except Exception as e:
+                print(f"❌ Критическая ошибка обработки заявки в цикле: {e}")
+                still_failed.append(application)
+        if something_changed or len(still_failed) < len(pending_data):
+            if still_failed:
+                with open(BACKUP_FILE, "w", encoding="utf-8") as f:
+                    json.dump(still_failed, f, ensure_ascii=False, indent=4)
+            else:
+                if os.path.exists(BACKUP_FILE):
+                    os.remove(BACKUP_FILE)
+                print("🎉 Все долги отправлены! Файл бэкапа удален.")
+
+async def on_startup(application: Application):
+    asyncio.create_task(retry_sender_loop(application.bot))
+    print("✅ Система резервного копирования запущена")
+
 def main():
     my_persistence = PicklePersistence(filepath="bot_data.pickle")
     db_service.check_and_add_assignee_column()
 
-    application = Application.builder().token(TOKEN).persistence(my_persistence).build()
+    application = Application.builder().token(TOKEN).persistence(my_persistence).post_init(on_startup).build()
 
     cancel_filter = filters.Regex(f"^{re.escape(BTN_CANCEL)}$")
 
