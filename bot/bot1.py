@@ -1727,6 +1727,7 @@ async def conv_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if saved_dep: context.user_data["saved_department"] = saved_dep
 
     moscow_tz = timezone(timedelta(hours=3))
+    # now = datetime(2025, 12, 20, 15, 30, 0, tzinfo=moscow_tz)
     now = datetime.now(moscow_tz)
     wd = now.weekday()
     h = now.hour
@@ -1743,7 +1744,7 @@ async def conv_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_weekend_time:
         final_text += (
             "\n⚠️ <b>Обратите внимание!</b>\n"
-            "Сейчас в отделе техподдержки КИС ЕМИАС нерабочее время (Пт 16:30 — Пн 08:30).\n"
+            "Сейчас в отделе техподдержки КИС ЕМИАС нерабочее время (Пт 16:30 — Пн 08:00).\n"
             "Специалисты приступят к решению вашей задачи в ближайшее рабочее время.\n\n"
             "🆘 <b>Если проблема требует срочного решения:</b>\n"
             "Обратитесь в круглосуточную поддержку: <code>+7(465)870-35-99</code>\n\n"
