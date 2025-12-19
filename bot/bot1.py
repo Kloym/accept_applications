@@ -8,6 +8,7 @@ import asyncio
 import json
 from enum import Enum
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from telegram import (
     Update,
     ReplyKeyboardMarkup,
@@ -271,7 +272,7 @@ def draw_complexity_chart(data, top_n=None):
 
     ax.set_xlim(0, x_max * 1.15)
 
-    ax.set_title('Сложность заявок по отделениям (Топ загруженных)', fontsize=14, pad=20)
+    ax.set_title('Сложность заявок по отделениям (Топ 15 загруженных)', fontsize=14, pad=20)
     ax.set_xlabel('Количество заявок', fontsize=12)
     
     ax.set_yticks(y_pos)
@@ -286,6 +287,53 @@ def draw_complexity_chart(data, top_n=None):
 
     buf = io.BytesIO()
     plt.savefig(buf, format='png', dpi=100, bbox_inches='tight')
+    buf.seek(0)
+    plt.close(fig)
+    
+    return buf
+
+def draw_global_complexity_chart(data):
+    """Рисует общий вертикальный график сложности по всем заявкам."""
+    datasets = data.get('datasets', {})
+    if not datasets:
+        return None
+    categories = {
+        "employee": "Мог выполнить самостоятельно",
+        "low": "Низкая",
+        "medium": "Средняя",
+        "high": "Высокая",
+        "naumen": "Наумен"
+    }
+    order = ["low", "medium", "high", "naumen", "employee"]
+    colors = {
+        "employee": "#808080", 
+        "low": "#22c55e",      
+        "medium": "#eab308",   
+        "high": "#ef4444",     
+        "naumen": "#3b82f6"    
+    }
+
+    labels = [categories[k] for k in order]
+    values = [sum(datasets.get(k, [])) for k in order]
+    bar_colors = [colors[k] for k in order]
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    bars = ax.bar(labels, values, color=bar_colors, width=0.6, edgecolor='white', linewidth=1.5)
+    ax.set_title('Общее распределение заявок по сложности', fontsize=14, pad=20, fontweight='bold')
+    ax.set_ylabel('Количество заявок')
+    ax.grid(axis='y', linestyle='--', alpha=0.3)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    for bar in bars:
+        height = bar.get_height()
+        ax.text(bar.get_x() + bar.get_width()/2., height + (max(values)*0.01),
+                f'{int(height)}',
+                ha='center', va='bottom', fontsize=11, fontweight='bold')
+
+    plt.tight_layout()
+
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', dpi=100)
     buf.seek(0)
     plt.close(fig)
     
@@ -457,6 +505,19 @@ class DbService:
         conn.commit()
         conn.close()
         return chat_id, name
+    
+    def get_app_archived_at(self, app_id):
+        conn = self._get_db()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT archived_at FROM applications WHERE application_id = ? AND status='done'", 
+                (app_id,)
+            )
+            row = cursor.fetchone()
+            return row["archived_at"] if row else None
+        finally:
+            conn.close()
 
     def get_last_user_data(self, chat_id):
         """Получает данные последней заявки пользователя для автозаполнения."""
@@ -2115,13 +2176,55 @@ async def conv_ask_return_reason(update: Update, context: ContextTypes.DEFAULT_T
     app_id = update.message.text.strip().lower()
     if len(app_id) != 8:
         await update.message.reply_text(
-            "ID должен быть 8 символов.", reply_markup=CANCEL_KEYBOARD
+            "⚠️ ID должен состоять из 8 символов.", reply_markup=CANCEL_KEYBOARD
         )
         return States.RETURN_WAIT_ID
+        
+    archived_at_str = await asyncio.to_thread(db_service.get_app_archived_at, app_id)
+    
+    if not archived_at_str:
+        await update.message.reply_text(
+            "❌ Заявка с таким ID не найдена среди выполненных.", 
+            reply_markup=CANCEL_KEYBOARD
+        )
+        return States.RETURN_WAIT_ID
+        
+    try:
+        try:
+            archived_dt = datetime.strptime(archived_at_str, "%d-%m-%Y %H:%M")
+        except ValueError:
+            archived_dt = datetime.strptime(archived_at_str, "%Y-%m-%d %H:%M")
+        msk_tz = ZoneInfo("Europe/Moscow")
+        if archived_dt.tzinfo is None:
+            archived_dt = archived_dt.replace(tzinfo=msk_tz)
+            
+        now = datetime.now(msk_tz)
+        diff = now - archived_dt
+        if diff > timedelta(days=2):
+            await update.message.reply_text(
+                f"⛔ <b>Ошибка!</b>\n"
+                f"Заявка <code>{app_id}</code> была закрыта более 2-х дней назад ({archived_at_str}).\n"
+                f"Вернуть её в работу уже нельзя. Пожалуйста, создайте новую заявку или выберите другую.",
+                parse_mode=ParseMode.HTML,
+                reply_markup=get_main_keyboard(update.effective_user.id)
+            )
+            return ConversationHandler.END
+
+    except ValueError:
+        logger.error(f"Не удалось распознать формат даты для {app_id}: {archived_at_str}")
+        await update.message.reply_text(
+            "⚠️ Ошибка обработки даты заявки. Обратитесь к администратору.",
+            reply_markup=CANCEL_KEYBOARD
+        )
+        return States.RETURN_WAIT_ID
+
     context.user_data["return_id"] = app_id
+    
     await update.message.reply_text(
-        "📝 <b>Опишите причину</b>\n"
-        'Что вам не понравилось в выполненной заявке или какая проблема осталась?\n\n(Или нажмите кнопку "Отменить действие")',
+        f"Заявка <code>{app_id}</code> выбрана.\n\n"
+        "📝 <b>Опишите причину возврата:</b>\n"
+        'Что вам не понравилось или какая проблема осталась?\n\n'
+        '(Или нажмите кнопку "Отменить действие")',
         parse_mode=ParseMode.HTML,
         reply_markup=CANCEL_KEYBOARD,
     )
@@ -2628,30 +2731,71 @@ async def stats_rating_command(update: Update, context: ContextTypes.DEFAULT_TYP
         parse_mode=ParseMode.HTML
     )
 
-async def complexity_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def stats_complexity_global_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    message = update.effective_message 
 
-    msg = await update.effective_message.reply_text("📊 Загружаю статистику...")
+    wait_msg = await message.reply_text("📊 Считаю уровни сложности...")
+
+    data = await api_client.get_stats_complexity()
+    
+    if not data or not data.get("datasets"):
+        await wait_msg.edit_text("❌ Нет данных для статистики.")
+        return
+    if process_pool:
+        loop = asyncio.get_running_loop()
+        photo_file = await loop.run_in_executor(process_pool, draw_global_complexity_chart, data)
+    else:
+        photo_file = draw_global_complexity_chart(data)
+
+    await wait_msg.delete()
+
+    if photo_file:
+        await context.bot.send_photo(
+            chat_id=user_id,
+            photo=photo_file,
+            caption="📊 <b>Общая статистика сложности</b>\n\n"
+                    "График показывает суммарное количество заявок каждого уровня сложности.",
+            parse_mode=ParseMode.HTML
+        )
+
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🏆 Топ-15 отделений по сложности", callback_data="run_stat:complex_dept")]
+        ])
+        
+        await context.bot.send_message(
+            chat_id=user_id,
+            text="Хотите увидеть топ 15 отделений по сложности?",
+            reply_markup=kb
+        )
+    else:
+        await context.bot.send_message(chat_id=user_id, text="❌ Ошибка при генерации графика.")
+
+async def complexity_dept_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    message = update.effective_message
+
+    wait_msg = await message.reply_text("🏗 Строю график по отделениям...")
 
     data = await api_client.get_stats_complexity()
     
     if not data or not data.get("departments"):
-        await msg.edit_text("❌ Нет данных для статистики.")
+        await wait_msg.edit_text("❌ Нет данных для статистики.")
         return
+    photo_file = await asyncio.to_thread(draw_complexity_chart, data, top_n=15)
 
-    photo_file = await asyncio.to_thread(draw_complexity_chart, data)
+    await wait_msg.delete()
 
     if photo_file:
-
-        await update.effective_message.reply_photo(
+        await context.bot.send_photo(
+            chat_id=user_id,
             photo=photo_file, 
-            caption="📈 <b>Статистика сложности по отделениям</b>\n\n"
+            caption="🏆 <b>Топ загруженных отделений по сложности</b>\n\n"
                     "🟢 Низкая\n🟡 Средняя\n🔴 Высокая\n🔵 Наумен\n🔘 Мог решить самостоятельно",
             parse_mode=ParseMode.HTML
         )
-        await msg.delete()
     else:
-        await msg.edit_text("❌ Ошибка при генерации графика.")
+        await context.bot.send_message(chat_id=user_id, text="❌ Ошибка при генерации графика.")
 
 
 
@@ -2723,7 +2867,7 @@ async def handle_stats_request(update: Update, context: ContextTypes.DEFAULT_TYP
         ],
         [
             InlineKeyboardButton("⭐ Рейтинг", callback_data="run_stat:rating"),
-            InlineKeyboardButton("📊 Сложность", callback_data="run_stat:complex")
+            InlineKeyboardButton("📊 Сложность", callback_data="run_stat:complex_new")
         ],
         [InlineKeyboardButton("❌ Закрыть", callback_data="run_stat:close")]
     ]
@@ -2747,8 +2891,10 @@ async def stats_router_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await stats_time_command(update, context)
     elif data == "run_stat:rating":
         await stats_rating_command(update, context)
-    elif data == "run_stat:complex":
-        await complexity_command(update, context)
+    elif data == "run_stat:complex_new":
+        await stats_complexity_global_command(update, context)
+    elif data == "run_stat:complex_dept":
+        await complexity_dept_command(update, context)
     elif data == "run_stat:close":
         await query.delete_message()
 
@@ -2987,7 +3133,7 @@ def main():
     application.add_handler(CommandHandler("stats", stats_command))
     application.add_handler(CommandHandler("time", stats_time_command))
     application.add_handler(CommandHandler("rating", stats_rating_command))
-    application.add_handler(CommandHandler("complex", complexity_command))
+    application.add_handler(CommandHandler("complex", stats_complexity_global_command))
 
     application.add_handler(
         CallbackQueryHandler(check_status_callback, pattern="^check_status:")
