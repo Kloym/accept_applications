@@ -179,7 +179,7 @@ def generate_plot_sync(labels: list, values: list) -> io.BytesIO:
     
     return buf
 
-def draw_complexity_chart(data, top_n=None):
+def draw_complexity_chart(data, top_n=15):
     departments = data['departments']
     datasets = data['datasets']
 
@@ -273,7 +273,6 @@ def draw_complexity_chart(data, top_n=None):
     ax.set_xlim(0, x_max * 1.15)
 
     ax.set_title('Сложность заявок по отделениям (Топ 15 загруженных)', fontsize=14, pad=20)
-    ax.set_xlabel('Количество заявок', fontsize=12)
     
     ax.set_yticks(y_pos)
     ax.set_yticklabels(sorted_departments, fontsize=10)
