@@ -50,6 +50,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("telegram.ext._application").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
+KDC_COOLDOWN = {}
 API_TOKEN = os.getenv("API_TOKEN", "hospital_secret_2025")
 TOKEN = os.getenv("TOKEN")
 BASE_SERVER_URL = "http://127.0.0.1:5000"
@@ -75,6 +76,7 @@ USERNAME_TO_FIO = {
     "pasheug": "Пашков Евгений Олегович",
     "NRiskin": "Рискин Никита Дмитриевич",
     "kloym": "Сергеев Алексей Андреевич",
+    "vitalyayastrebov": "Ястеробов Виталий Михайлович",
 }
 
 def save_to_backup(data_dict):
@@ -105,7 +107,10 @@ def get_main_keyboard(user_id=None):
             KeyboardButton("Вернуть заявку в работу"),
             KeyboardButton("Дополнить заявку"),
         ],
-        [KeyboardButton("Добавить фото"), KeyboardButton("📚 Инструкция")],
+        [
+            KeyboardButton("Добавить фото"),
+            KeyboardButton("🚨 КДЦ"),
+            KeyboardButton("📚 Инструкция")],
     ]
 
     if user_id and user_id in BOSS_CHAT_IDS:
@@ -524,7 +529,12 @@ class DbService:
         cursor = conn.cursor()
         try:
             cursor.execute(
-                "SELECT name, ip, department FROM applications WHERE chat_id = ? ORDER BY created_at DESC LIMIT 1",
+                """
+                SELECT name, ip, department 
+                FROM applications 
+                WHERE chat_id = ? AND department != 'КДЦ' 
+                ORDER BY created_at DESC LIMIT 1
+                """,
                 (chat_id,)
             )
             row = cursor.fetchone()
@@ -780,6 +790,74 @@ def get_departments_inline_keyboard(page=0, filter_letter=None, saved_dep=None):
     keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel_action")])
 
     return InlineKeyboardMarkup(keyboard)
+
+async def kdc_alarm_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    chat_id = update.effective_chat.id
+
+    now = datetime.now()
+    last_time = KDC_COOLDOWN.get(chat_id)
+    if last_time and (now - last_time).total_seconds() < 240:
+        remaining = int(240 - (now - last_time).total_seconds())
+        await update.message.reply_text(
+            f"⏳ <b>Вы уже отправили срочный вызов!</b>\n"
+            f"Повторно можно будет нажать через {remaining} сек.\n"
+            f"Ожидайте, специалисты уже получили ваше уведомление.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    KDC_COOLDOWN[chat_id] = now
+
+    app_id = str(uuid.uuid4())[:8]
+
+    data = {
+        "name": user.full_name or "Сотрудник КДЦ",
+        "ip": "—",
+        "department": "КДЦ",
+        "details": "Личная переписка с техподдержкой",
+        "attachments": [],
+        "chat_id": chat_id,
+        "username": user.username or "",
+        "application_id": app_id,
+        "status": "active",
+        "difficulty": "high"
+    }
+
+    try:
+        await api_client.post_new_application(data)
+    except Exception as e:
+        logger.error(f"Ошибка создания КДЦ заявки: {e}")
+
+    await update.message.reply_text(
+        f"🚨 <b>Запрос отправлен!</b> 🚨\n\n"
+        f"Заявка <code>{app_id}</code> создана.\n"
+        f"Ожидайте, специалист подключится в ближайшее время.",
+        parse_mode=ParseMode.HTML
+    )
+
+    alarm_msg = (
+        f"🆘🆘🆘 <b>ALARM! СРОЧНО КДЦ!</b> 🆘🆘🆘\n\n"
+        f"👤 <b>Кто:</b> {user.full_name} (@{user.username})\n"
+        f"🆔 <b>ID:</b> <code>{app_id}</code>\n"
+        f"📍 <b>Отделение:</b> КДЦ\n"
+        f"⚠️ <b>ЛИЧНАЯ ПЕРЕПИСКА С ТЕХПОДДЕРЖКОЙ</b>"
+    )
+
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🫡 ВЗЯТЬ ЗАЯВКУ СРОЧНО", callback_data=f"kdc_take:{app_id}")]
+    ])
+
+    for admin_id in NOTIFY_CHAT_IDS:
+        try:
+            await context.bot.send_message(
+                chat_id=admin_id,
+                text=alarm_msg,
+                reply_markup=keyboard,
+                parse_mode=ParseMode.HTML
+            )
+        except Exception as e:
+            logger.error(f"Не удалось отправить Alarm админу {admin_id}: {e}")
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2982,6 +3060,58 @@ async def on_startup(application: Application):
     asyncio.create_task(retry_sender_loop(application.bot))
     print("✅ Система резервного копирования запущена")
 
+async def kdc_assign_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    app_id = query.data.split(":")[1]
+    tg_user = query.from_user
+    username = tg_user.username
+    if username and username in USERNAME_TO_FIO:
+        admin_name = USERNAME_TO_FIO[username]
+    else:
+        admin_name = tg_user.full_name
+    status, response_data = await api_client.assign_application(app_id, admin_name)
+
+    original_text = query.message.text_html
+    if status == "success":
+        await query.answer("🚀 Вы приняли срочный вызов!")
+        new_text = original_text + f"\n\n✅ <b>ЗАЯВКУ ПРИНЯЛ:</b> {admin_name}"
+        await query.edit_message_text(text=new_text, parse_mode=ParseMode.HTML, reply_markup=None)
+        user_chat_id = response_data.get("user_chat_id")
+        
+        if user_chat_id:
+            if username:
+                chat_url = f"https://t.me/{username}"
+                user_kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("💬 Перейти в личный чат с техподдержкой", url=chat_url)]
+                ])
+            else:
+                user_kb = None
+
+            try:
+                msg_to_user = (
+                    f"🚒 <b>Вашу срочную заявку принял:</b>\n"
+                    f"👨‍💻 <b>{admin_name}</b>\n\n"
+                    f"Специалист уже занимается вашей проблемой!"
+                )
+                await context.bot.send_message(
+                    chat_id=user_chat_id,
+                    text=msg_to_user,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=user_kb
+                )
+            except Exception as e:
+                logger.error(f"Ошибка отправки уведомления пользователю КДЦ: {e}")
+
+    elif status == "already_taken":
+        current = response_data.get("current_assignee", "другой сотрудник")
+        await query.answer(f"⛔ Ошибка! Заявку уже взял: {current}", show_alert=True)
+
+        new_text = original_text + f"\n\n✅ <b>ЗАЯВКУ ПРИНЯЛ:</b> {current}"
+        await query.edit_message_text(text=new_text, parse_mode=ParseMode.HTML, reply_markup=None)
+
+    else:
+        await query.answer("❌ Ошибка: заявка не найдена.", show_alert=True)
+
 def main():
     my_persistence = PicklePersistence(filepath="bot_data.pickle")
     db_service.check_and_add_assignee_column()
@@ -2996,6 +3126,7 @@ def main():
 
     conv_handler = ConversationHandler(
         entry_points=[
+            MessageHandler(filters.Text("🚨 КДЦ"), kdc_alarm_handler),
             MessageHandler(filters.Text("📝 Новая заявка"), conv_ask_name),
             MessageHandler(filters.Text("🔄 Повторить последнюю заявку"), conv_repeat_last_app),
             MessageHandler(filters.Text("Добавить фото"), conv_ask_update_id),
@@ -3145,6 +3276,9 @@ def main():
     )
     application.add_handler(
         CallbackQueryHandler(assign_callback, pattern="^assign:")
+    )
+    application.add_handler(
+        CallbackQueryHandler(kdc_assign_callback, pattern="^kdc_take:")
     )
     application.add_handler(
         CallbackQueryHandler(stats_router_callback, pattern="^run_stat:")
