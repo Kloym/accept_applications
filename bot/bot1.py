@@ -746,7 +746,6 @@ def get_departments_inline_keyboard(page=0, filter_letter=None, saved_dep=None):
     keyboard = []
 
     if saved_dep:
-        # Добавляем эмодзи звезды для заметности
         btn_text = f"⭐ {saved_dep}"
         keyboard.append([InlineKeyboardButton(btn_text, callback_data="use_saved_dep")])
 
