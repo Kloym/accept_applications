@@ -20,11 +20,16 @@ from io import BytesIO
 from math import ceil
 from functools import wraps
 
-DATABASE_FILE = "applications.db"
 UPLOAD_FOLDER_NAME = "uploads"
-BASE_DIR = os.path.dirname(__file__)
-UPLOAD_FOLDER_PATH = os.path.join(BASE_DIR, UPLOAD_FOLDER_NAME)
 API_SECRET = os.getenv("API_TOKEN", "hospital_secret_2025")
+if os.path.exists("/data"):
+    print("Running on Amvera Cloud")
+    DATABASE_FILE = "/data/applications.db"
+    UPLOAD_FOLDER_PATH = "/data/uploads"
+else:
+    BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    DATABASE_FILE = os.path.join(BASE_DIR, "applications.db")
+    UPLOAD_FOLDER_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
 
 app = Flask(__name__)
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER_PATH
