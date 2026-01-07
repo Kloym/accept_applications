@@ -13,7 +13,8 @@ from flask import (
     url_for,
     send_file,
     g,
-    session
+    session,
+    Response,
 )
 import pandas as pd
 from io import BytesIO
@@ -24,6 +25,30 @@ UPLOAD_FOLDER_NAME = "uploads"
 API_SECRET = os.getenv("API_TOKEN", "hospital_secret_2025")
 
 app = Flask(__name__)
+
+WEB_USER = os.getenv("WEB_USER", "admin")
+WEB_PASS = os.getenv("WEB_PASS", "change_me_please")
+
+def check_auth(username, password):
+    """Сверяет введенные данные с переменными окружения"""
+    return username == WEB_USER and password == WEB_PASS
+
+def authenticate():
+    """Отправляет заголовк 401, вызывающий окно логина в браузере"""
+    return Response(
+    'Доступ запрещен. Введите правильный логин и пароль.\n', 401,
+    {'WWW-Authenticate': 'Basic realm="Login Required"'})
+
+def requires_auth(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        auth = request.authorization
+        if not auth or not check_auth(auth.username, auth.password):
+            return authenticate()
+        return f(*args, **kwargs)
+    return decorated
+
+
 if os.path.exists("/data"):
     print("Server running on Render with Persistent Disk")
     DATABASE_FILE = "/data/applications.db"
@@ -688,11 +713,13 @@ def api_get_app_ids_for_user(chat_id):
 
 
 @app.route("/", methods=["GET"])
+@requires_auth
 def home():
     return render_template("index.html")
 
 
 @app.route("/applications")
+@requires_auth
 def get_active_applications():
     page = request.args.get("page", 1, type=int)
     if page < 1:
@@ -717,12 +744,14 @@ def get_active_applications():
 
 
 @app.route("/comments")
+@requires_auth
 def comments_view():
     applications = repo_get_comments_view()
     return render_template("comments.html", applications=applications)
 
 
 @app.route("/archive")
+@requires_auth
 def get_archive():
     page = request.args.get("page", 1, type=int)
     if page < 1:
@@ -743,6 +772,7 @@ def get_archive():
 
 
 @app.route("/set_difficulty/<int:application_id>", methods=["POST"])
+@requires_auth
 def set_difficulty(application_id):
     new_difficulty = request.form.get("difficulty")
     if new_difficulty not in ["low", "medium", "high", "naumen", "employee"]:
@@ -753,6 +783,7 @@ def set_difficulty(application_id):
 
 
 @app.route("/export_archive")
+@requires_auth
 def export_archive():
     raw_rows = repo_get_raw_apps_for_export()
     if not raw_rows:
@@ -797,6 +828,7 @@ def export_archive():
 
 
 @app.route("/delete_photo/<int:app_id>/<path:filename>", methods=["POST"])
+@requires_auth
 def delete_photo(app_id, filename):
     success = repo_delete_single_photo(app_id, filename)
     if not success:
@@ -823,10 +855,24 @@ def uploaded_file(filename):
 
 
 @app.route("/update_notes/<int:app_id>", methods=["POST"])
+@requires_auth
 def update_notes(app_id):
     notes = request.form.get("staff_notes")
     repo_update_staff_notes(app_id, notes)
     return redirect(request.referrer or url_for("get_active_applications"))
+
+@app.route("/api/download_db", methods=["GET"])
+@require_api_key
+def download_db():
+    """Позволяет скачать файл базы данных, используя API токен"""
+    try:
+        return send_file(
+            app.config["DATABASE"],
+            as_attachment=True,
+            download_name=f"backup_{datetime.now().strftime('%Y%m%d')}.db"
+        )
+    except Exception as e:
+        return jsonify({"error": f"Ошибка скачивания: {e}"}), 500
 
 
 if __name__ == "__main__":
