@@ -63,9 +63,14 @@ logging.getLogger("telegram.ext._application").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 KDC_COOLDOWN = {}
-API_TOKEN = os.getenv("API_TOKEN", "hospital_secret_2025")
+USER_COOLDOWN = {}
+API_TOKEN = os.getenv("API_TOKEN")
+if not API_TOKEN:
+    logger.critical("⛔ ОШИБКА: Не найден API_TOKEN в переменных окружения (.env)!")
+    print("⛔ ОШИБКА: Бот не может запуститься без API_TOKEN.")
+    exit(1)
 TOKEN = os.getenv("TOKEN")
-BASE_SERVER_URL = "http://127.0.0.1:5000"
+BASE_SERVER_URL = os.getenv("BASE_SERVER_URL", "http://127.0.0.1:5000")
 DB_FILE = "applications.db"
 BACKUP_FILE = "pending_applications.json"
 DEPARTMENTS = sorted(DEPARTMENTS)
@@ -1305,6 +1310,20 @@ async def conv_back_to_photos(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def conv_ask_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+
+    now = datetime.now()
+    if user_id in USER_COOLDOWN:
+        last_time = USER_COOLDOWN[user_id]
+        if (now - last_time).total_seconds() < 60:
+            remaining = int(60 - (now - last_time).total_seconds())
+            await update.message.reply_text(
+                f"⏳ <b>Пожалуйста, подождите.</b>\n"
+                f"Следующую заявку можно будет отправить через {remaining} сек.",
+                parse_mode=ParseMode.HTML
+            )
+            return ConversationHandler.END
+        
     saved_name = context.user_data.get("saved_name")
     saved_ip = context.user_data.get("saved_ip")
     saved_dep = context.user_data.get("saved_department")
@@ -1913,6 +1932,8 @@ async def conv_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not server_online:
         data["offline_message_id"] = sent_message.message_id
         save_to_backup(data)
+
+    USER_COOLDOWN[user_id] = datetime.now()
 
     return ConversationHandler.END
 
@@ -2755,6 +2776,28 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=ParseMode.HTML
         )
 
+async def backup_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отправляет файл базы данных администратору."""
+    user_id = update.effective_user.id
+    if user_id not in BOSS_CHAT_IDS:
+        return 
+
+    if not os.path.exists(DB_FILE):
+        await update.message.reply_text("❌ Файл базы данных не найден.")
+        return
+
+    try:
+        await update.message.reply_text("📦 Выгружаю базу данных...")
+        with open(DB_FILE, "rb") as f:
+            await update.message.reply_document(
+                document=f,
+                filename=f"backup_{datetime.now().strftime('%Y-%m-%d_%H-%M')}.db",
+                caption="🔒 Ваша резервная копия базы данных."
+            )
+    except Exception as e:
+        logger.error(f"Backup error: {e}")
+        await update.message.reply_text(f"❌ Ошибка выгрузки: {e}")
+
 async def stats_time_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
@@ -3275,6 +3318,7 @@ def main():
     application.add_handler(CommandHandler("time", stats_time_command))
     application.add_handler(CommandHandler("rating", stats_rating_command))
     application.add_handler(CommandHandler("complex", stats_complexity_global_command))
+    application.add_handler(CommandHandler("backup", backup_command))
 
     application.add_handler(
         CallbackQueryHandler(check_status_callback, pattern="^check_status:")

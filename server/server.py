@@ -22,7 +22,10 @@ from math import ceil
 from functools import wraps
 
 UPLOAD_FOLDER_NAME = "uploads"
-API_SECRET = os.getenv("API_TOKEN", "hospital_secret_2025")
+API_SECRET = os.getenv("API_TOKEN")
+if not API_SECRET:
+    print("⛔ SERVER ERROR: No API_TOKEN found!")
+    exit(1)
 
 app = Flask(__name__)
 
@@ -878,4 +881,4 @@ def download_db():
 if __name__ == "__main__":
     with app.app_context():
         init_db()
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=False)
