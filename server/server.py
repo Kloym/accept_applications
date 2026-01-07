@@ -22,20 +22,23 @@ from functools import wraps
 
 UPLOAD_FOLDER_NAME = "uploads"
 API_SECRET = os.getenv("API_TOKEN", "hospital_secret_2025")
+
+app = Flask(__name__)
 if os.path.exists("/data"):
-    print("Running on Amvera Cloud")
+    print("Server running on Render with Persistent Disk")
     DATABASE_FILE = "/data/applications.db"
     UPLOAD_FOLDER_PATH = "/data/uploads"
 else:
+    print("Server running locally")
     BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     DATABASE_FILE = os.path.join(BASE_DIR, "applications.db")
     UPLOAD_FOLDER_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
 
-app = Flask(__name__)
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER_PATH
 app.config["DATABASE"] = DATABASE_FILE
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
 app.secret_key = "super_secret_flask_key"
+os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
 
 PER_PAGE = 50
 

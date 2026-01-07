@@ -40,6 +40,18 @@ import matplotlib
 matplotlib.use('Agg')
 from concurrent.futures import ProcessPoolExecutor
 
+if os.path.exists("/data"):
+    print("Running on Render with Persistent Disk")
+    DB_FILE = "/data/applications.db"
+    BACKUP_FILE = "/data/pending_applications.json" 
+    BASE_SERVER_URL = "http://127.0.0.1:5000"
+else:
+    print("Running Locally")
+    BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    DB_FILE = os.path.join(BASE_DIR, "applications.db")
+    BACKUP_FILE = os.path.join(BASE_DIR, "pending_applications.json")
+    BASE_SERVER_URL = "http://127.0.0.1:5000"
+
 
 process_pool = None
 load_dotenv()
