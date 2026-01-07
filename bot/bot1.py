@@ -53,17 +53,9 @@ logger = logging.getLogger(__name__)
 KDC_COOLDOWN = {}
 API_TOKEN = os.getenv("API_TOKEN", "hospital_secret_2025")
 TOKEN = os.getenv("TOKEN")
-
-if os.path.exists("/data"):
-    DB_FILE = "/data/applications.db"
-    BACKUP_FILE = "/data/pending_applications.json"
-    BASE_SERVER_URL = "http://127.0.0.1:5000" 
-else:
-    BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    DB_FILE = os.path.join(BASE_DIR, "applications.db")
-    BACKUP_FILE = os.path.join(BASE_DIR, "pending_applications.json")
-    BASE_SERVER_URL = "http://127.0.0.1:5000"
-
+BASE_SERVER_URL = "http://127.0.0.1:5000"
+DB_FILE = "applications.db"
+BACKUP_FILE = "pending_applications.json"
 DEPARTMENTS = sorted(DEPARTMENTS)
 raw_admin_ids = os.getenv("ADMIN_IDS", "")
 if raw_admin_ids:
