@@ -40,21 +40,26 @@ import matplotlib
 matplotlib.use('Agg')
 from concurrent.futures import ProcessPoolExecutor
 
+load_dotenv()
+
+BASE_SERVER_URL = os.getenv("BASE_SERVER_URL") or os.getenv("API_URL") or "http://127.0.0.1:5000"
+
 if os.path.exists("/data"):
-    print("Running on Render with Persistent Disk")
+    print(f"Running on Render. Server URL: {BASE_SERVER_URL}")
     DB_FILE = "/data/applications.db"
     BACKUP_FILE = "/data/pending_applications.json" 
-    BASE_SERVER_URL = "http://127.0.0.1:5000"
 else:
-    print("Running Locally")
+    print(f"Running Locally. Server URL: {BASE_SERVER_URL}")
     BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     DB_FILE = os.path.join(BASE_DIR, "applications.db")
     BACKUP_FILE = os.path.join(BASE_DIR, "pending_applications.json")
-    BASE_SERVER_URL = "http://127.0.0.1:5000"
-
 
 process_pool = None
-load_dotenv()
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+)
+
+process_pool = None
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
@@ -70,7 +75,6 @@ if not API_TOKEN:
     print("⛔ ОШИБКА: Бот не может запуститься без API_TOKEN.")
     exit(1)
 TOKEN = os.getenv("TOKEN")
-BASE_SERVER_URL = os.getenv("BASE_SERVER_URL", "http://127.0.0.1:5000")
 DB_FILE = "applications.db"
 BACKUP_FILE = "pending_applications.json"
 DEPARTMENTS = sorted(DEPARTMENTS)
