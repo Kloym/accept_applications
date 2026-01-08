@@ -392,7 +392,7 @@ class ApiService:
 
     async def _post_json(self, endpoint, data):
         url = f"{self.base_url}/{endpoint}"
-        headers = {"Authorization": f"Bearer hospital_secret_2025"} 
+        headers = {"Authorization": f"Bearer {API_TOKEN}"}
         
         async with aiohttp.ClientSession() as session:
             try:
