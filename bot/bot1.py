@@ -3149,7 +3149,7 @@ async def on_startup(application: Application):
     print("✅ Система резервного копирования запущена")
 
     job_queue = application.job_queue
-    target_time = time(hour=22, minute=5, tzinfo=ZoneInfo("Europe/Moscow"))
+    target_time = time(hour=22, minute=20, tzinfo=ZoneInfo("Europe/Moscow"))
     job_queue.run_daily(auto_backup_job, time=target_time, days=(5,))
     
     print(f"⏰ Планировщик запущен: бэкап для 308035415 по пятницам в {target_time}")
