@@ -18,3 +18,4 @@ itsdangerous
 colorama
 flask-admin
 flask-sqlalchemy
+APScheduler
