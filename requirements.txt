@@ -16,3 +16,5 @@ jinja2
 click
 itsdangerous
 colorama
+flask-admin
+flask-sqlalchemy

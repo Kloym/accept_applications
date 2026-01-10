@@ -7,7 +7,7 @@ import re
 import asyncio
 import json
 from enum import Enum
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, time
 from zoneinfo import ZoneInfo
 from telegram import (
     Update,
@@ -3114,9 +3114,45 @@ async def retry_sender_loop(bot):
                     os.remove(BACKUP_FILE)
                 print("🎉 Все долги отправлены! Файл бэкапа удален.")
 
+async def auto_backup_job(context: ContextTypes.DEFAULT_TYPE):
+    """Автоматическая отправка бэкапа лично администратору по пятницам."""
+
+    MY_CHAT_ID = 308035415
+
+    if not os.path.exists(DB_FILE):
+        print(f"❌ [Auto-Backup] Файл {DB_FILE} не найден.")
+        try:
+            await context.bot.send_message(
+                chat_id=MY_CHAT_ID, 
+                text="⚠️ Не удалось сделать авто-бэкап: файл базы данных не найден."
+            )
+        except:
+            pass
+        return
+    filename = f"AUTO_BACKUP_{datetime.now().strftime('%Y-%m-%d')}.db"
+    
+    try:
+        with open(DB_FILE, "rb") as f:
+            await context.bot.send_document(
+                chat_id=MY_CHAT_ID,
+                document=f,
+                filename=filename,
+                caption="💾 <b>Еженедельный авто-бэкап</b> (Пятница, 16:30)",
+                parse_mode=ParseMode.HTML
+            )
+        print(f"✅ Авто-бэкап успешно отправлен на ID {MY_CHAT_ID}")
+    except Exception as e:
+        logger.error(f"Ошибка отправки авто-бэкапа: {e}")
+
 async def on_startup(application: Application):
     asyncio.create_task(retry_sender_loop(application.bot))
     print("✅ Система резервного копирования запущена")
+
+    job_queue = application.job_queue
+    target_time = time(hour=21, minute=51, tzinfo=ZoneInfo("Europe/Moscow"))
+    job_queue.run_daily(auto_backup_job, time=target_time, days=(5,))
+    
+    print(f"⏰ Планировщик запущен: бэкап для 308035415 по пятницам в {target_time}")
 
 async def kdc_assign_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query

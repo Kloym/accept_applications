@@ -3,6 +3,9 @@ import base64
 import sqlite3
 import json
 from datetime import datetime, timedelta
+from flask_sqlalchemy import SQLAlchemy
+from flask_admin import Admin, AdminIndexView, expose
+from flask_admin.contrib.sqla import ModelView
 from flask import (
     Flask,
     request,
@@ -876,6 +879,72 @@ def download_db():
         )
     except Exception as e:
         return jsonify({"error": f"Ошибка скачивания: {e}"}), 500
+    
+app.config['SQLALCHEMY_DATABASE_URI'] = f"sqlite:///{app.config['DATABASE']}"
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+db_orm = SQLAlchemy(app)
+
+class ApplicationModel(db_orm.Model):
+    __tablename__ = 'applications'
+    id = db_orm.Column(db_orm.Integer, primary_key=True)
+    application_id = db_orm.Column(db_orm.String, unique=True)
+    chat_id = db_orm.Column(db_orm.String)
+    ip = db_orm.Column(db_orm.String)
+    name = db_orm.Column(db_orm.String)
+    department = db_orm.Column(db_orm.String)
+    details = db_orm.Column(db_orm.Text)
+    username = db_orm.Column(db_orm.String)
+    photos = db_orm.Column(db_orm.Text)
+    status = db_orm.Column(db_orm.String, default='active')
+    created_at = db_orm.Column(db_orm.String)
+    archived_at = db_orm.Column(db_orm.String)
+    done_by = db_orm.Column(db_orm.String)
+    difficulty = db_orm.Column(db_orm.String, default='low')
+    staff_notes = db_orm.Column(db_orm.Text)
+    solution = db_orm.Column(db_orm.Text)
+    rating = db_orm.Column(db_orm.Integer, default=0)
+    assignee = db_orm.Column(db_orm.String)
+
+class MessageModel(db_orm.Model):
+    __tablename__ = 'messages'
+    id = db_orm.Column(db_orm.Integer, primary_key=True)
+    application_id = db_orm.Column(db_orm.String, nullable=False)
+    sender = db_orm.Column(db_orm.String)
+    message_text = db_orm.Column(db_orm.Text)
+    created_at = db_orm.Column(db_orm.DateTime)
+
+class SecureModelView(ModelView):
+    def is_accessible(self):
+        auth = request.authorization
+        return auth and check_auth(auth.username, auth.password)
+
+    def inaccessible_callback(self, name, **kwargs):
+        return authenticate()
+
+class SecureAdminIndexView(AdminIndexView):
+    @expose('/')
+    def index(self):
+        auth = request.authorization
+        if not auth or not check_auth(auth.username, auth.password):
+            return authenticate()
+        return super(SecureAdminIndexView, self).index()
+
+admin = Admin(app, name='Управление Заявками', template_mode='bootstrap4', index_view=SecureAdminIndexView())
+class ApplicationView(SecureModelView):
+    column_searchable_list = ['name', 'application_id', 'username', 'details']
+    column_filters = ['status', 'department', 'difficulty', 'rating']
+    column_exclude_list = ['photos']
+    form_widget_args = {
+        'created_at': {'readonly': True}
+    }
+
+class MessageView(SecureModelView):
+    column_searchable_list = ['message_text', 'sender', 'application_id']
+    column_filters = ['sender']
+
+admin.add_view(ApplicationView(ApplicationModel, db_orm.session, name="Заявки"))
+admin.add_view(MessageView(MessageModel, db_orm.session, name="Сообщения"))
 
 
 if __name__ == "__main__":
