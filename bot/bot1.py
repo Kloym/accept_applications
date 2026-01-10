@@ -97,8 +97,7 @@ ALL_PERMITTED_IDS = set(NOTIFY_CHAT_IDS + BOSS_CHAT_IDS)
 USERNAME_TO_FIO = {
     "pasheug": "Пашков Евгений Олегович",
     "NRiskin": "Рискин Никита Дмитриевич",
-    "kloym": "Сергеев Алексей Андреевич",
-    "vitalyayastrebov": "Ястеробов Виталий Михайлович",
+    "Artemdo1990": "Долматов Артем Владимирович",
 }
 
 def save_to_backup(data_dict):

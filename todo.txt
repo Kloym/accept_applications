@@ -1,4 +1,11 @@
-Добавить статистику третьей строчкой в коде
-Добавить Андрееву в .env
-Добавить numpy в poetry
+Поменять на render 
+boss_ids, admins_ids и также поменять Token на нужный
+сделать Restart servise
 
+сначала сделать вот это
+ssh srv-d5f8e0hr0fns73e7tr00@ssh.frankfurt.render.com
+mv /data/applications.db /data/applications_old.db
+exit
+
+Потом новую базу
+scp applications.db srv-d5f8e0hr0fns73e7tr00@ssh.frankfurt.render.com:/data/
