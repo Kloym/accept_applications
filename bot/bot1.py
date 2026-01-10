@@ -3151,7 +3151,7 @@ async def on_startup(application: Application):
 
     job_queue = application.job_queue
     moscow_tz = ZoneInfo("Europe/Moscow")
-    target_time = time(hour=23, minute=00, tzinfo=moscow_tz)
+    target_time = time(hour=16, minute=30, tzinfo=moscow_tz)
     current_jobs = job_queue.get_jobs_by_name("friday_backup")
     for job in current_jobs:
         job.schedule_removal()
@@ -3159,10 +3159,9 @@ async def on_startup(application: Application):
     job_queue.run_daily(
         auto_backup_job, 
         time=target_time, 
-        days=(5,),
+        days=(4,),
         name="friday_backup"
     )
-    job_queue.run_once(auto_backup_job, 10)
     
     print(f"⏰ Планировщик запущен: бэкап для 308035415 по пятницам в {target_time}")
 
