@@ -16,6 +16,6 @@ jinja2
 click
 itsdangerous
 colorama
-flask-admin
+flask-admin>=1.6.0
 flask-sqlalchemy
 APScheduler
