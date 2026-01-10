@@ -930,7 +930,7 @@ class SecureAdminIndexView(AdminIndexView):
             return authenticate()
         return super(SecureAdminIndexView, self).index()
 
-admin = Admin(app, name='Управление Заявками', template_mode='bootstrap4', index_view=SecureAdminIndexView())
+admin = Admin(app, name='Управление Заявками', index_view=SecureAdminIndexView())
 class ApplicationView(SecureModelView):
     column_searchable_list = ['name', 'application_id', 'username', 'details']
     column_filters = ['status', 'department', 'difficulty', 'rating']
