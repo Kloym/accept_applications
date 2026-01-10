@@ -28,6 +28,7 @@ from telegram.ext import (
     CallbackQueryHandler,
     ConversationHandler,
     PicklePersistence,
+    Defaults,
 )
 from dotenv import load_dotenv
 import os
@@ -3149,8 +3150,16 @@ async def on_startup(application: Application):
     print("✅ Система резервного копирования запущена")
 
     job_queue = application.job_queue
-    target_time = time(hour=22, minute=20, tzinfo=ZoneInfo("Europe/Moscow"))
-    job_queue.run_daily(auto_backup_job, time=target_time, days=(5,))
+    moscow_tz = ZoneInfo("Europe/Moscow")
+    target_time = time(hour=22, minute=55, tzinfo=moscow_tz)
+    job_queue.run_daily(
+        auto_backup_job,
+        time=target_time,
+        days=(5,),
+        name="friday_backup",
+        replace_existing=True
+    )
+    application.job_queue.run_once(auto_backup_job, 10)
     
     print(f"⏰ Планировщик запущен: бэкап для 308035415 по пятницам в {target_time}")
 
@@ -3210,7 +3219,16 @@ def main():
     my_persistence = PicklePersistence(filepath="bot_data.pickle")
     db_service.check_and_add_assignee_column()
 
-    application = Application.builder().token(TOKEN).persistence(my_persistence).post_init(on_startup).build()
+    msk_defaults = Defaults(tzinfo=ZoneInfo("Europe/Moscow"))
+
+    application = (
+        Application.builder()
+        .token(TOKEN)
+        .persistence(my_persistence)
+        .defaults(msk_defaults)
+        .post_init(on_startup)
+        .build()
+    )
 
     cancel_filter = filters.Regex(f"^{re.escape(BTN_CANCEL)}$")
 
