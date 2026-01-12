@@ -32,7 +32,6 @@ from telegram.ext import (
 )
 from dotenv import load_dotenv
 import os
-# Убедитесь, что файл op.py существует и в нем есть DEPARTMENTS
 from op import DEPARTMENTS, DEPARTMENTS_PER_PAGE
 import io
 import matplotlib.pyplot as plt
@@ -50,7 +49,7 @@ logging.basicConfig(
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("telegram.ext._application").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
-BASE_SERVER_URL = os.getenv("BASE_SERVER_URL") or os.getenv("API_URL") or "http://127.0.0.1:5000"
+BASE_SERVER_URL = os.getenv("BASE_SERVER_URL") or os.getenv("API_URL") or "http://127.0.0.1:10000"
 
 if os.path.exists("/data"):
     print(f"Running on Render. Server URL: {BASE_SERVER_URL}")
@@ -3224,6 +3223,9 @@ def main():
         .token(TOKEN)
         .persistence(my_persistence)
         .defaults(msk_defaults)
+        # .read_timeout(30)
+        # .write_timeout(30)
+        # .connect_timeout(30)
         .post_init(on_startup)
         .build()
     )

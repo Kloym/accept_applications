@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from flask_sqlalchemy import SQLAlchemy
 from flask_admin import Admin, AdminIndexView, expose
 from flask_admin.contrib.sqla import ModelView
+import requests
 from flask import (
     Flask,
     request,
@@ -21,10 +22,16 @@ from flask import (
 )
 import pandas as pd
 from io import BytesIO
+from threading import Thread
+import io
 from math import ceil
 from functools import wraps
+from dotenv import load_dotenv
 
+
+load_dotenv()
 UPLOAD_FOLDER_NAME = "uploads"
+BOT_TOKEN = os.getenv("TOKEN")
 API_SECRET = os.getenv("API_TOKEN")
 if not API_SECRET:
     print("⛔ SERVER ERROR: No API_TOKEN found!")
@@ -32,8 +39,10 @@ if not API_SECRET:
 
 app = Flask(__name__)
 
-WEB_USER = os.getenv("WEB_USER", "admin")
-WEB_PASS = os.getenv("WEB_PASS", "change_me_please")
+WEB_USER = os.getenv("WEB_USER")
+WEB_PASS = os.getenv("WEB_PASS")
+if not API_SECRET or not WEB_PASS:
+    raise ValueError("Не заданы переменные окружения API_TOKEN или WEB_PASS")
 
 def check_auth(username, password):
     """Сверяет введенные данные с переменными окружения"""
@@ -945,6 +954,163 @@ class MessageView(SecureModelView):
 
 admin.add_view(ApplicationView(ApplicationModel, db_orm.session, name="Заявки"))
 admin.add_view(MessageView(MessageModel, db_orm.session, name="Сообщения"))
+
+def send_telegram_document(chat_id, file_storage, caption, reply_markup=None):
+    if not BOT_TOKEN: return
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument"
+    data = {"chat_id": chat_id, "caption": caption, "parse_mode": "HTML"}
+    if reply_markup:
+        data["reply_markup"] = json.dumps(reply_markup)
+
+    file_storage.seek(0)
+    files = {"document": (file_storage.filename, file_storage)}
+    
+    try:
+        requests.post(url, data=data, files=files, timeout=30)
+    except Exception as e:
+        print(f"Ошибка отправки документа в TG: {e}")
+
+def send_telegram_message(chat_id, text, reply_markup=None):
+    if not BOT_TOKEN: return
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
+    if reply_markup:
+        payload["reply_markup"] = json.dumps(reply_markup)
+    try:
+        requests.post(url, json=payload, timeout=30)
+    except Exception as e:
+        print(f"Ошибка отправки в TG: {e}")
+
+def send_telegram_photo(chat_id, file_storage, caption, reply_markup=None):
+    if not BOT_TOKEN: return
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
+    data = {"chat_id": chat_id, "caption": caption, "parse_mode": "HTML"}
+    if reply_markup:
+        data["reply_markup"] = json.dumps(reply_markup)
+    file_storage.seek(0)
+    files = {"photo": file_storage}
+    try:
+        requests.post(url, data=data, files=files, timeout=30)
+    except Exception as e:
+        print(f"Ошибка отправки фото в TG: {e}")
+
+
+@app.route("/tools")
+@requires_auth
+def tools_page():
+    return render_template("tools.html")
+
+def background_sender(chat_id, text, reply_markup, file_data=None, filename=None, is_photo=False):
+    """
+    Эта функция работает в отдельном потоке.
+    Она не задерживает ответ пользователю.
+    """
+    try:
+        file_obj = None
+        if file_data and filename:
+            file_obj = io.BytesIO(file_data)
+            file_obj.name = filename
+
+        if file_obj:
+            if is_photo:
+                send_telegram_photo(chat_id, file_obj, text, reply_markup=reply_markup)
+            else:
+                send_telegram_document(chat_id, file_obj, text, reply_markup=reply_markup)
+        else:
+            send_telegram_message(chat_id, text, reply_markup=reply_markup)
+            
+        print(f"Log: Сообщение успешно отправлено в фоне для {chat_id}")
+    except Exception as e:
+        print(f"Error: Ошибка при фоновой отправке: {e}")
+
+
+@app.route("/api/tools/execute", methods=["POST"])
+@require_api_key
+def tools_execute():
+    action = request.form.get("action")
+    app_id = request.form.get("app_id")
+    admin_name = request.form.get("admin_name")
+    text = request.form.get("text", "")
+    file_obj = request.files.get("photo") 
+    
+    if not app_id or not action:
+        return jsonify({"error": "Нет ID или действия"}), 400
+
+    db = get_db()
+    is_photo = False
+    file_data = None
+    filename = None
+
+    if file_obj and file_obj.filename:
+        filename = file_obj.filename
+        file_data = file_obj.read()
+        
+        if filename.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
+            is_photo = True
+
+    if action == "finish":
+        cur = db.execute("SELECT chat_id, name FROM applications WHERE application_id = ?", (app_id,))
+        row = cur.fetchone()
+        if not row: return jsonify({"error": "Заявка не найдена"}), 404
+            
+        chat_id, user_name = row["chat_id"], row["name"]
+        archived_at = datetime.now().strftime("%Y-%m-%d %H:%M")
+        solution_text = text if text else "Заявка выполнена."
+        db.execute(
+            "UPDATE applications SET status='done', archived_at=?, done_by=?, solution=? WHERE application_id=?",
+            (archived_at, admin_name, solution_text, app_id)
+        )
+        db.commit()
+
+        msg = f"{user_name}, ваша заявка <code>{app_id}</code> выполнена!\n\n<b>Решение:</b>\n{solution_text}"
+
+        rating_kb = {
+            "inline_keyboard": [[
+                {"text": "⭐ 1", "callback_data": f"rate:{app_id}:1"},
+                {"text": "⭐ 2", "callback_data": f"rate:{app_id}:2"},
+                {"text": "⭐ 3", "callback_data": f"rate:{app_id}:3"},
+                {"text": "⭐ 4", "callback_data": f"rate:{app_id}:4"},
+                {"text": "⭐ 5", "callback_data": f"rate:{app_id}:5"},
+            ]]
+        }
+        thread = Thread(target=background_sender, args=(chat_id, msg, rating_kb, file_data, filename, is_photo))
+        thread.start()
+            
+        return jsonify({"message": f"Заявка {app_id} закрыта (отправка идет в фоне)."})
+
+    elif action == "message":
+        cur = db.execute("SELECT chat_id, name FROM applications WHERE application_id = ?", (app_id,))
+        row = cur.fetchone()
+        if not row: return jsonify({"error": "Заявка не найдена"}), 404
+        chat_id = row["chat_id"]
+
+        db.execute("INSERT INTO messages (application_id, sender, message_text) VALUES (?, ?, ?)",
+                   (app_id, admin_name, text))
+        db.commit()
+
+        full_text = f"🔔 Сообщение по заявке <code>{app_id}:</code>\n\n<b>{text}</b>\n\n<i>(От: {admin_name})</i>"
+        
+        reply_kb = {
+            "inline_keyboard": [[{"text": "✍️ Ответить", "callback_data": f"reply_admin:{app_id}"}]]
+        }
+        thread = Thread(target=background_sender, args=(chat_id, full_text, reply_kb, file_data, filename, is_photo))
+        thread.start()
+            
+        return jsonify({"message": "Сообщение отправлено (в фоне)."})
+
+    elif action == "restore":
+        cur = db.execute("SELECT chat_id, name FROM applications WHERE application_id = ?", (app_id,))
+        row = cur.fetchone()
+        if not row: return jsonify({"error": "Заявка не найдена"}), 404
+        
+        db.execute("UPDATE applications SET status='active', archived_at=NULL WHERE application_id=?", (app_id,))
+        db.commit()
+        thread = Thread(target=send_telegram_message, args=(row["chat_id"], f"Ваша заявка <code>{app_id}</code> возвращена в работу!"))
+        thread.start()
+
+        return jsonify({"message": "Заявка восстановлена."})
+
+    return jsonify({"error": "Неизвестное действие"}), 400
 
 
 if __name__ == "__main__":
