@@ -19,6 +19,7 @@ from flask import (
     g,
     session,
     Response,
+    current_app,
 )
 import sys
 import pandas as pd
@@ -1078,7 +1079,7 @@ def tools_execute():
             ]]
         }
         thread = Thread(target=background_sender, args=(
-            app._get_current_object(), 
+            current_app._get_current_object(),
             chat_id, 
             msg, 
             rating_kb, 
@@ -1106,7 +1107,7 @@ def tools_execute():
             "inline_keyboard": [[{"text": "✍️ Ответить", "callback_data": f"reply_admin:{app_id}"}]]
         }
         thread = Thread(target=background_sender, args=(
-            app._get_current_object(), 
+            current_app._get_current_object(), 
             chat_id, 
             full_text, 
             reply_kb, 
