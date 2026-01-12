@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Подача заявки</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        :root {
+            --bg-color: var(--tg-theme-bg-color, #fff);
+            --text-color: var(--tg-theme-text-color, #000);
+            --hint-color: var(--tg-theme-hint-color, #999);
+            --link-color: var(--tg-theme-link-color, #2481cc);
+            --button-color: var(--tg-theme-button-color, #2481cc);
+            --button-text-color: var(--tg-theme-button-text-color, #fff);
+            --secondary-bg-color: var(--tg-theme-secondary-bg-color, #f0f0f0);
+            --danger-color: #ff3b30;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 16px;
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        h3 {
+            margin-top: 0;
+            text-align: center;
+            font-weight: 600;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+            position: relative;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--hint-color);
+        }
+
+        input, textarea {
+            width: 100%;
+            padding: 14px;
+            box-sizing: border-box;
+            border: 1px solid transparent;
+            background-color: var(--secondary-bg-color);
+            color: var(--text-color);
+            border-radius: 12px;
+            font-size: 16px;
+            outline: none;
+            transition: all 0.2s;
+        }
+
+        input:focus, textarea:focus {
+            background-color: var(--bg-color);
+            border-color: var(--link-color);
+            box-shadow: 0 0 0 2px rgba(36, 129, 204, 0.1);
+        }
+
+        textarea {
+            resize: none;
+            min-height: 100px;
+        }
+
+        /* --- КАСТОМНЫЙ ВЫБОР ОТДЕЛЕНИЯ (ПОИСК) --- */
+        .dropdown-wrapper {
+            position: relative;
+        }
+        
+        .dropdown-list {
+            display: none;
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: var(--bg-color);
+            border: 1px solid var(--secondary-bg-color);
+            border-radius: 12px;
+            max-height: 250px;
+            overflow-y: auto;
+            z-index: 1000;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            margin-top: 5px;
+        }
+
+        .dropdown-list.open {
+            display: block;
+        }
+
+        .dropdown-item {
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--secondary-bg-color);
+            cursor: pointer;
+            font-size: 15px;
+        }
+
+        .dropdown-item:last-child {
+            border-bottom: none;
+        }
+
+        .dropdown-item:active {
+            background-color: var(--secondary-bg-color);
+        }
+
+        .no-results {
+            padding: 12px;
+            color: var(--hint-color);
+            text-align: center;
+            font-size: 14px;
+        }
+
+        /* --- ФАЙЛЫ --- */
+        .file-upload-label {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 14px;
+            background-color: rgba(36, 129, 204, 0.08);
+            color: var(--link-color);
+            border-radius: 12px;
+            cursor: pointer;
+            font-weight: 600;
+            border: 1px dashed var(--link-color);
+            transition: background 0.2s;
+        }
+
+        .file-upload-label:active {
+            background-color: rgba(36, 129, 204, 0.15);
+        }
+
+        #file-list {
+            margin-top: 10px;
+        }
+        
+        .file-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 12px;
+            background: var(--secondary-bg-color);
+            border-radius: 8px;
+            margin-bottom: 6px;
+            font-size: 14px;
+        }
+
+        .file-remove {
+            color: var(--danger-color);
+            font-weight: bold;
+            padding-left: 10px;
+            cursor: pointer;
+        }
+
+        .error-msg {
+            color: var(--danger-color);
+            font-size: 13px;
+            margin-top: 6px;
+            display: none;
+            animation: fadeIn 0.3s;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-5px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Анимация загрузки */
+        .loader-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 2000;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            backdrop-filter: blur(3px);
+        }
+        
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #fff;
+            border-top: 4px solid transparent;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+
+    <h3>Новая заявка</h3>
+
+    <div class="form-group">
+        <label for="name">Ваши ФИО</label>
+        <input type="text" id="name" placeholder="Фамилия Имя Отчество" autocomplete="off">
+        <div class="error-msg" id="error-name">⚠️ Пожалуйста, введите ФИО полностью (минимум 2 слова)</div>
+    </div>
+
+    <div class="form-group">
+        <label for="ip">IP адрес компьютера</label>
+        <input type="text" inputmode="numeric" id="ip" placeholder="Например: 10.12.34.56" autocomplete="off">
+        <div class="error-msg" id="error-ip">⚠️ Неверный формат IP (пример: 192.168.1.1)</div>
+    </div>
+
+    <div class="form-group dropdown-wrapper">
+        <label for="dep-input">Отделение</label>
+        <input type="text" id="dep-input" placeholder="Нажмите для выбора или поиска..." autocomplete="off">
+        <div class="dropdown-list" id="dep-list">
+            {% for dep in departments %}
+            <div class="dropdown-item">{{ dep }}</div>
+            {% endfor %}
+            <div class="no-results" style="display:none">Ничего не найдено</div>
+        </div>
+        <div class="error-msg" id="error-dep">⚠️ Выберите отделение из списка</div>
+    </div>
+
+    <div class="form-group">
+        <label for="details">Описание проблемы</label>
+        <textarea id="details" placeholder="Опишите, что случилось, код ошибки и т.д."></textarea>
+        <div class="error-msg" id="error-details">⚠️ Опишите проблему</div>
+    </div>
+
+    <div class="form-group">
+        <label class="file-upload-label">
+            <input type="file" id="files" multiple style="display: none;" accept="image/*,.doc,.docx,.xls,.xlsx,.pdf,.txt">
+            📎 Прикрепить фото или файл
+        </label>
+        <div id="file-list"></div>
+    </div>
+
+    <div class="loader-overlay" id="loader">
+        <div class="spinner"></div>
+        <div>Отправка данных...</div>
+    </div>
+
+    <script>
+        const tg = window.Telegram.WebApp;
+        tg.expand(); 
+
+        // Инициализация кнопки
+        tg.MainButton.text = "ОТПРАВИТЬ ЗАЯВКУ";
+        tg.MainButton.color = getComputedStyle(document.documentElement).getPropertyValue('--button-color').trim() || "#2481cc";
+        tg.MainButton.textColor = "#ffffff";
+        tg.MainButton.show();
+
+        // --- ЛОГИКА ВЫБОРА ОТДЕЛЕНИЯ ---
+        const depInput = document.getElementById('dep-input');
+        const depList = document.getElementById('dep-list');
+        const depItems = document.querySelectorAll('.dropdown-item');
+        const noResults = document.querySelector('.no-results');
+
+        // Открыть список при клике
+        depInput.addEventListener('click', () => {
+            depList.classList.add('open');
+            filterDeps(); // Сразу фильтруем (если там уже что-то написано)
+        });
+
+        // Фильтрация при вводе
+        depInput.addEventListener('input', filterDeps);
+
+        function filterDeps() {
+            const filter = depInput.value.toLowerCase();
+            let hasVisible = false;
+
+            depItems.forEach(item => {
+                const text = item.textContent.toLowerCase();
+                if (text.includes(filter)) {
+                    item.style.display = 'block';
+                    hasVisible = true;
+                } else {
+                    item.style.display = 'none';
+                }
+            });
+
+            depList.classList.add('open');
+            noResults.style.display = hasVisible ? 'none' : 'block';
+        }
+
+        // Выбор элемента
+        depItems.forEach(item => {
+            item.addEventListener('click', () => {
+                depInput.value = item.textContent; // Устанавливаем текст
+                depList.classList.remove('open'); // Скрываем
+                depInput.classList.remove('error'); // Убираем ошибку визуально
+            });
+        });
+
+        // Закрыть список если кликнуть мимо
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.dropdown-wrapper')) {
+                depList.classList.remove('open');
+            }
+        });
+
+        // --- ЛОГИКА ФАЙЛОВ ---
+        let selectedFiles = [];
+        const fileInput = document.getElementById('files');
+        const fileListDisplay = document.getElementById('file-list');
+
+        fileInput.addEventListener('change', function(e) {
+            const newFiles = Array.from(e.target.files);
+            // Добавляем новые к старым (или заменяем - тут добавляем)
+            selectedFiles = [...selectedFiles, ...newFiles];
+            renderFiles();
+            // Сбрасываем input, чтобы можно было выбрать тот же файл снова если удалил
+            fileInput.value = ''; 
+        });
+
+        function renderFiles() {
+            fileListDisplay.innerHTML = '';
+            selectedFiles.forEach((file, index) => {
+                const div = document.createElement('div');
+                div.className = 'file-item';
+                div.innerHTML = `
+                    <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">📄 ${file.name}</span>
+                    <span class="file-remove" onclick="removeFile(${index})">✕</span>
+                `;
+                fileListDisplay.appendChild(div);
+            });
+        }
+
+        window.removeFile = function(index) {
+            selectedFiles.splice(index, 1);
+            renderFiles();
+        }
+
+        // --- ВАЛИДАЦИЯ И ОТПРАВКА ---
+        function isValidIP(ip) {
+            // Простая проверка, разрешаем 10.x.x.x и 192.168.x.x и т.д.
+            // Если у вас в больнице специфичные IP, можно упростить
+            return /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/.test(ip);
+        }
+
+        function showError(id, show) {
+            document.getElementById(id).style.display = show ? 'block' : 'none';
+        }
+
+        tg.onEvent('mainButtonClicked', async function() {
+            const name = document.getElementById('name').value.trim();
+            const ip = document.getElementById('ip').value.trim();
+            const department = document.getElementById('dep-input').value.trim(); // Берем из input
+            const details = document.getElementById('details').value.trim();
+
+            // Сброс ошибок
+            ['error-name', 'error-ip', 'error-dep', 'error-details'].forEach(id => showError(id, false));
+
+            let valid = true;
+
+            if (name.split(' ').length < 2 || name.length < 5) {
+                showError('error-name', true);
+                valid = false;
+            }
+            if (!isValidIP(ip)) {
+                showError('error-ip', true);
+                valid = false;
+            }
+            // Проверяем, есть ли такое отделение в списке (строгое соответствие)
+            // Или разрешаем писать свое? Обычно лучше строгое.
+            // Тут просто проверим, что не пустое.
+            if (!department) {
+                showError('error-dep', true);
+                valid = false;
+            }
+            if (!details) {
+                showError('error-details', true);
+                valid = false;
+            }
+
+            if (!valid) {
+                tg.HapticFeedback.notificationOccurred('error');
+                return;
+            }
+
+            // Показываем лоадер
+            document.getElementById('loader').style.display = 'flex';
+            tg.MainButton.hide(); // Прячем кнопку телеграма чтобы не нажали дважды
+
+            try {
+                // Конвертация файлов
+                const toBase64 = file => new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.readAsDataURL(file);
+                    reader.onload = () => resolve({
+                        b64: reader.result.split(',')[1],
+                        extension: file.name.split('.').pop().toLowerCase()
+                    });
+                    reader.onerror = error => reject(error);
+                });
+
+                const attachments = await Promise.all(selectedFiles.map(toBase64));
+                
+                // Генерация ID
+                const uuid = crypto.randomUUID ? crypto.randomUUID().substring(0, 8) : Math.random().toString(36).substring(2, 10);
+
+                const payload = {
+                    name: name,
+                    ip: ip,
+                    department: department,
+                    details: details,
+                    attachments: attachments,
+                    chat_id: tg.initDataUnsafe?.user?.id || 0,
+                    username: tg.initDataUnsafe?.user?.username || '',
+                    application_id: uuid,
+                    status: 'active'
+                };
+
+                const response = await fetch('/applications', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (response.ok) {
+                    tg.HapticFeedback.notificationOccurred('success');
+                    tg.close();
+                } else {
+                    throw new Error('Server returned ' + response.status);
+                }
+
+            } catch (error) {
+                document.getElementById('loader').style.display = 'none';
+                tg.MainButton.show();
+                tg.HapticFeedback.notificationOccurred('error');
+                alert("Ошибка связи с сервером: " + error.message);
+            }
+        });
+    </script>
+</body>
+</html>
