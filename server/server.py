@@ -20,6 +20,7 @@ from flask import (
     session,
     Response,
 )
+import sys
 import pandas as pd
 from io import BytesIO
 from threading import Thread
@@ -1000,28 +1001,31 @@ def send_telegram_photo(chat_id, file_storage, caption, reply_markup=None):
 def tools_page():
     return render_template("tools.html")
 
-def background_sender(chat_id, text, reply_markup, file_data=None, filename=None, is_photo=False):
+def background_sender(app, chat_id, text, reply_markup, file_data=None, filename=None, is_photo=False):
     """
-    Эта функция работает в отдельном потоке.
-    Она не задерживает ответ пользователю.
+    Эта функция работает в отдельном потоке внутри контекста приложения.
     """
-    try:
-        file_obj = None
-        if file_data and filename:
-            file_obj = io.BytesIO(file_data)
-            file_obj.name = filename
+    with app.app_context():
+        try:
+            file_obj = None
+            if file_data and filename:
+                file_obj = io.BytesIO(file_data)
+                file_obj.name = filename 
 
-        if file_obj:
-            if is_photo:
-                send_telegram_photo(chat_id, file_obj, text, reply_markup=reply_markup)
+            if file_obj:
+                if is_photo:
+                    send_telegram_photo(chat_id, file_obj, text, reply_markup=reply_markup)
+                else:
+                    send_telegram_document(chat_id, file_obj, text, reply_markup=reply_markup)
             else:
-                send_telegram_document(chat_id, file_obj, text, reply_markup=reply_markup)
-        else:
-            send_telegram_message(chat_id, text, reply_markup=reply_markup)
+                send_telegram_message(chat_id, text, reply_markup=reply_markup)
+                
+            print(f"Log: Сообщение успешно отправлено в фоне для {chat_id}", file=sys.stdout)
+            sys.stdout.flush()
             
-        print(f"Log: Сообщение успешно отправлено в фоне для {chat_id}")
-    except Exception as e:
-        print(f"Error: Ошибка при фоновой отправке: {e}")
+        except Exception as e:
+            print(f"Error: Ошибка при фоновой отправке: {e}", file=sys.stderr)
+            sys.stdout.flush()
 
 
 @app.route("/api/tools/execute", methods=["POST"])
@@ -1073,7 +1077,15 @@ def tools_execute():
                 {"text": "⭐ 5", "callback_data": f"rate:{app_id}:5"},
             ]]
         }
-        thread = Thread(target=background_sender, args=(chat_id, msg, rating_kb, file_data, filename, is_photo))
+        thread = Thread(target=background_sender, args=(
+            app._get_current_object(), 
+            chat_id, 
+            msg, 
+            rating_kb, 
+            file_data, 
+            filename, 
+            is_photo
+        ))
         thread.start()
             
         return jsonify({"message": f"Заявка {app_id} закрыта (отправка идет в фоне)."})
@@ -1093,7 +1105,15 @@ def tools_execute():
         reply_kb = {
             "inline_keyboard": [[{"text": "✍️ Ответить", "callback_data": f"reply_admin:{app_id}"}]]
         }
-        thread = Thread(target=background_sender, args=(chat_id, full_text, reply_kb, file_data, filename, is_photo))
+        thread = Thread(target=background_sender, args=(
+            app._get_current_object(), 
+            chat_id, 
+            full_text, 
+            reply_kb, 
+            file_data, 
+            filename, 
+            is_photo
+        ))
         thread.start()
             
         return jsonify({"message": "Сообщение отправлено (в фоне)."})
