@@ -32,6 +32,7 @@ from telegram.ext import (
 )
 from dotenv import load_dotenv
 import os
+# Убедитесь, что файл op.py существует и в нем есть DEPARTMENTS
 from op import DEPARTMENTS, DEPARTMENTS_PER_PAGE
 import io
 import matplotlib.pyplot as plt
@@ -43,6 +44,12 @@ from concurrent.futures import ProcessPoolExecutor
 
 load_dotenv()
 
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("telegram.ext._application").setLevel(logging.WARNING)
+logger = logging.getLogger(__name__)
 BASE_SERVER_URL = os.getenv("BASE_SERVER_URL") or os.getenv("API_URL") or "http://127.0.0.1:5000"
 
 if os.path.exists("/data"):
@@ -52,32 +59,22 @@ if os.path.exists("/data"):
 else:
     print(f"Running Locally. Server URL: {BASE_SERVER_URL}")
     BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    DB_FILE = os.path.join(BASE_DIR, "applications.db")
-    BACKUP_FILE = os.path.join(BASE_DIR, "pending_applications.json")
+    DB_FILE = "applications.db"
+    BACKUP_FILE = "pending_applications.json"
 
 process_pool = None
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
-)
-
-process_pool = None
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
-)
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("telegram.ext._application").setLevel(logging.WARNING)
-logger = logging.getLogger(__name__)
-
 KDC_COOLDOWN = {}
 USER_COOLDOWN = {}
 API_TOKEN = os.getenv("API_TOKEN")
 if not API_TOKEN:
     logger.critical("⛔ ОШИБКА: Не найден API_TOKEN в переменных окружения (.env)!")
-    print("⛔ ОШИБКА: Бот не может запуститься без API_TOKEN.")
     exit(1)
+
 TOKEN = os.getenv("TOKEN")
-DB_FILE = "applications.db"
-BACKUP_FILE = "pending_applications.json"
+if not TOKEN:
+    logger.critical("⛔ ОШИБКА: Не найден TOKEN (Telegram) в переменных окружения (.env)!")
+    exit(1)
+
 DEPARTMENTS = sorted(DEPARTMENTS)
 raw_admin_ids = os.getenv("ADMIN_IDS", "")
 if raw_admin_ids:

@@ -3,7 +3,7 @@
 *.sqlite3
 .env
 *.pickle
-bot_data.pickle
+.bot_data.pickle/
 bot_data_backup.pickle
 uploads/
 __pycache__/
