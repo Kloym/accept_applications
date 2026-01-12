@@ -1011,7 +1011,9 @@ def background_sender(app, chat_id, text, reply_markup, file_data=None, filename
             file_obj = None
             if file_data and filename:
                 file_obj = io.BytesIO(file_data)
-                file_obj.name = filename 
+                file_obj.name = filename
+                file_obj.filename = filename 
+                file_obj.seek(0)
 
             if file_obj:
                 if is_photo:
