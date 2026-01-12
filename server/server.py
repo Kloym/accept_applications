@@ -1091,7 +1091,7 @@ def tools_execute():
         ))
         thread.start()
             
-        return jsonify({"message": f"Заявка {app_id} закрыта (отправка идет в фоне)."})
+        return jsonify({"message": f"Заявка {app_id} закрыта."})
 
     elif action == "message":
         cur = db.execute("SELECT chat_id, name FROM applications WHERE application_id = ?", (app_id,))
@@ -1103,7 +1103,7 @@ def tools_execute():
                    (app_id, admin_name, text))
         db.commit()
 
-        full_text = f"🔔 Сообщение по заявке <code>{app_id}:</code>\n\n<b>{text}</b>\n\n<i>(От: {admin_name})</i>"
+        full_text = f"🔔 Сообщение по заявке <code>{app_id}</code>:\n\n<b>{text}</b>"
         
         reply_kb = {
             "inline_keyboard": [[{"text": "✍️ Ответить", "callback_data": f"reply_admin:{app_id}"}]]
@@ -1119,7 +1119,7 @@ def tools_execute():
         ))
         thread.start()
             
-        return jsonify({"message": "Сообщение отправлено (в фоне)."})
+        return jsonify({"message": "Сообщение отправлено."})
 
     elif action == "restore":
         cur = db.execute("SELECT chat_id, name FROM applications WHERE application_id = ?", (app_id,))
