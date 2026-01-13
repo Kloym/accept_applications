@@ -3,6 +3,7 @@ import base64
 import sqlite3
 import json
 from datetime import datetime, timedelta
+import pytz
 from flask_sqlalchemy import SQLAlchemy
 from flask_admin import Admin, AdminIndexView, expose
 from flask_admin.contrib.sqla import ModelView
@@ -1051,18 +1052,31 @@ def tools_execute():
     if file_obj and file_obj.filename:
         filename = file_obj.filename
         file_data = file_obj.read()
-        
         if filename.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
             is_photo = True
 
+    tz_moscow = pytz.timezone('Europe/Moscow')
+    current_time_msk = datetime.now(tz_moscow) 
+    
     if action == "finish":
-        cur = db.execute("SELECT chat_id, name FROM applications WHERE application_id = ?", (app_id,))
+
+        cur = db.execute("SELECT chat_id, name, status FROM applications WHERE application_id = ?", (app_id,))
         row = cur.fetchone()
-        if not row: return jsonify({"error": "Заявка не найдена"}), 404
-            
+        
+        if not row: 
+            return jsonify({"error": "Заявка не найдена"}), 404
+
+        if row["status"] == 'done':
+            return jsonify({
+                "error": "Ошибка! Эту заявку уже закрыл другой администратор.",
+                "should_refresh": True
+            }), 409
+
         chat_id, user_name = row["chat_id"], row["name"]
-        archived_at = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+        archived_at = current_time_msk.strftime("%Y-%m-%d %H:%M")
         solution_text = text if text else "Заявка выполнена."
+        
         db.execute(
             "UPDATE applications SET status='done', archived_at=?, done_by=?, solution=? WHERE application_id=?",
             (archived_at, admin_name, solution_text, app_id)
@@ -1080,6 +1094,7 @@ def tools_execute():
                 {"text": "⭐ 5", "callback_data": f"rate:{app_id}:5"},
             ]]
         }
+        
         thread = Thread(target=background_sender, args=(
             current_app._get_current_object(),
             chat_id, 
@@ -1094,9 +1109,13 @@ def tools_execute():
         return jsonify({"message": f"Заявка {app_id} закрыта."})
 
     elif action == "message":
-        cur = db.execute("SELECT chat_id, name FROM applications WHERE application_id = ?", (app_id,))
+        cur = db.execute("SELECT chat_id, name, status FROM applications WHERE application_id = ?", (app_id,))
         row = cur.fetchone()
         if not row: return jsonify({"error": "Заявка не найдена"}), 404
+
+        if row["status"] == 'done':
+             return jsonify({"error": "Нельзя писать в закрытую заявку."}), 409
+
         chat_id = row["chat_id"]
 
         db.execute("INSERT INTO messages (application_id, sender, message_text) VALUES (?, ?, ?)",
