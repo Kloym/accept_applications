@@ -1193,7 +1193,7 @@ async def conv_back_to_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Возврат к вводу имени."""
     saved_name = context.user_data.get("saved_name")
 
-    text = '<b>👋 Введите ФИО:</b>\n\n(Или нажмите кнопку "Отменить действие")'
+    text = '<b>👋 Введите свое ФИО:</b>\n\n(Или нажмите кнопку "Отменить действие")'
     buttons = [[KeyboardButton(BTN_CANCEL)]]
 
     if saved_name:
@@ -1339,7 +1339,7 @@ async def conv_ask_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = (
         '1️⃣⬜⬜⬜ <b>Шаг 1 из 4</b>\n'
-        '<b>👋 Введите ФИО:</b>\n\n(Или нажмите кнопку "Отменить действие")'
+        '<b>👋 Введите свое ФИО:</b>\n\n(Или нажмите кнопку "Отменить действие")'
     )
     buttons = [[KeyboardButton(BTN_CANCEL)]]
 

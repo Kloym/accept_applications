@@ -21,6 +21,7 @@ flask-admin = "^2.0.2"
 flask-sqlalchemy = "^3.1.1"
 apscheduler = "^3.11.2"
 pytz = "^2025.2"
+pillow = "^12.1.0"
 
 
 

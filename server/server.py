@@ -30,6 +30,7 @@ import io
 from math import ceil
 from functools import wraps
 from dotenv import load_dotenv
+from PIL import Image
 
 
 load_dotenv()
@@ -104,8 +105,23 @@ class FileService:
     def save_photo_from_b64(self, b64_data: str, filename: str) -> str:
         try:
             photo_path = os.path.join(self.upload_folder, filename)
-            with open(photo_path, "wb") as f:
-                f.write(base64.b64decode(b64_data))
+            file_data = base64.b64decode(b64_data)
+
+            if filename.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.bmp')):
+                try:
+                    with Image.open(io.BytesIO(file_data)) as img:
+                        if img.mode in ("RGBA", "P"):
+                             img = img.convert("RGB")
+                        img.thumbnail((1600, 1600)) 
+                        img.save(photo_path, quality=80, optimize=True)
+                except Exception as e:
+                    print(f"Ошибка сжатия, сохраняем оригинал: {e}")
+                    with open(photo_path, "wb") as f:
+                        f.write(file_data)
+            else:
+                with open(photo_path, "wb") as f:
+                    f.write(file_data)
+                    
             return filename
         except Exception as e:
             print(f"Ошибка сохранения файла {filename}: {e}")
@@ -128,8 +144,12 @@ file_service = FileService(app.config["UPLOAD_FOLDER"])
 
 def get_db():
     if "db" not in g:
-        g.db = sqlite3.connect(app.config["DATABASE"])
+        g.db = sqlite3.connect(app.config["DATABASE"], timeout=60)
         g.db.row_factory = sqlite3.Row
+        g.db.execute("PRAGMA journal_mode=WAL;")
+        g.db.execute("PRAGMA synchronous=NORMAL;")
+        g.db.execute("PRAGMA cache_size=-64000;") 
+        
     return g.db
 
 
@@ -180,13 +200,19 @@ def init_db():
         "ALTER TABLE applications ADD COLUMN assignee TEXT",
         "ALTER TABLE applications ADD COLUMN difficulty TEXT DEFAULT 'low'"
     ]
-
     for sql in migrations:
         try:
             db.execute(sql)
-            print(f"Миграция успешна: {sql}")
         except sqlite3.OperationalError:
             pass
+    indexes = [
+        "CREATE INDEX IF NOT EXISTS idx_status_archived ON applications(status, archived_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_status_created ON applications(status, created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_app_id ON applications(application_id)",
+        "CREATE INDEX IF NOT EXISTS idx_messages_app_id ON messages(application_id)"
+    ]
+    for idx_sql in indexes:
+        db.execute(idx_sql)
         
     db.commit()
 
@@ -319,7 +345,23 @@ def repo_get_applications_paginated(status: str, page: int, per_page: int):
     offset = (page - 1) * per_page
     order_by = "archived_at DESC" if status == "done" else "created_at DESC"
 
-    query = f"SELECT * FROM applications WHERE status = ? ORDER BY {order_by} LIMIT ? OFFSET ?"
+    query = f"""
+        SELECT 
+            a.*,
+            (
+                SELECT message_text 
+                FROM messages m 
+                WHERE m.application_id = a.application_id 
+                AND m.message_text NOT LIKE '%[ОТВЕТ ПОЛЬЗОВАТЕЛЯ]%'
+                ORDER BY m.created_at DESC 
+                LIMIT 1
+            ) as auto_solution
+        FROM applications a 
+        WHERE a.status = ? 
+        ORDER BY {order_by} 
+        LIMIT ? OFFSET ?
+    """
+    
     cur = db.execute(query, (status, per_page, offset))
     rows = cur.fetchall()
 
@@ -337,20 +379,17 @@ def repo_get_applications_paginated(status: str, page: int, per_page: int):
             ext = p.split(".")[-1].lower()
             is_image = ext in ["jpg", "jpeg", "png", "gif", "bmp", "webp"]
             is_video = ext in ["mp4", "mov", "avi", "webm", "mkv"]
-            is_other_file = not is_image and not is_video
-            
             file_objects.append(
                 {
                     "url": url_for("uploaded_file", filename=p),
                     "filename": p,
                     "is_image": is_image,
                     "is_video": is_video,
-                    "is_file": is_other_file,
+                    "is_file": not is_image and not is_video,
                     "extension": ext,
                 }
             )
         app_data["photo_objects"] = file_objects
-
         for date_field in ["created_at", "archived_at"]:
             try:
                 if app_data.get(date_field):
@@ -362,23 +401,12 @@ def repo_get_applications_paginated(status: str, page: int, per_page: int):
 
         if status == "done":
             manual_solution = app_data.get("solution")
-            if manual_solution and "[ОТВЕТ ПОЛЬЗОВАТЕЛЯ]" in str(manual_solution):
-                manual_solution = None
-
-            if not manual_solution:
-                cur_msgs = db.execute(
-                    """SELECT message_text FROM messages WHERE application_id = ? 
-                    ORDER BY created_at DESC LIMIT 20""",
-                    (app_data["application_id"],),
-                )
-                messages = cur_msgs.fetchall()
-                found_text = None
-                for msg in messages:
-                    text = msg["message_text"]
-                    if "[ОТВЕТ ПОЛЬЗОВАТЕЛЯ]" not in text:
-                        found_text = text
-                        break
-                app_data["solution"] = found_text
+            if manual_solution and "[ОТВЕТ ПОЛЬЗОВАТЕЛЯ]" not in str(manual_solution):
+                pass 
+            else:
+                auto_sol = app_data.get("auto_solution")
+                if auto_sol:
+                    app_data["solution"] = auto_sol
 
         applications.append(app_data)
 
@@ -597,6 +625,8 @@ def add_application():
             if saved_name:
                 file_paths.append(saved_name)
 
+    tz_moscow = pytz.timezone('Europe/Moscow')
+
     db_data = {
         "name": data.get("name", "").title(),
         "ip": data.get("ip"),
@@ -608,7 +638,7 @@ def add_application():
         "status": data.get("status", "active"),
         "difficulty": data.get("difficulty", "low"),
         "photos_json": json.dumps(file_paths),
-        "created_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "created_at": datetime.now(tz_moscow).strftime("%Y-%m-%d %H:%M"),
     }
 
     try:
@@ -868,7 +898,8 @@ def uploaded_file(filename):
     return send_from_directory(
         app.config["UPLOAD_FOLDER"], 
         filename, 
-        as_attachment=is_attachment
+        as_attachment=is_attachment,
+        max_age=31536000,
     )
 
 
@@ -944,12 +975,26 @@ class SecureAdminIndexView(AdminIndexView):
 
 admin = Admin(app, name='Управление Заявками', index_view=SecureAdminIndexView())
 class ApplicationView(SecureModelView):
-    column_searchable_list = ['name', 'application_id', 'username', 'details']
+    column_searchable_list = ['name', 'application_id', 'username']
     column_filters = ['status', 'department', 'difficulty', 'rating']
-    column_exclude_list = ['photos']
+    column_exclude_list = ['photos', 'details', 'solution', 'staff_notes']
+    column_default_sort = ('created_at', True)
+    page_size = 50
+
     form_widget_args = {
         'created_at': {'readonly': True}
     }
+    def on_model_delete(self, model):
+        try:
+            if model.photos:
+                import json
+                try:
+                    photos = json.loads(model.photos)
+                    file_service.delete_photos(photos)
+                except:
+                    pass
+        except Exception as e:
+            print(f"Error deleting files in admin: {e}")
 
 class MessageView(SecureModelView):
     column_searchable_list = ['message_text', 'sender', 'application_id']
