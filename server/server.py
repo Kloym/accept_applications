@@ -111,9 +111,9 @@ class FileService:
                 try:
                     with Image.open(io.BytesIO(file_data)) as img:
                         if img.mode in ("RGBA", "P"):
-                             img = img.convert("RGB")
-                        img.thumbnail((1600, 1600)) 
-                        img.save(photo_path, quality=80, optimize=True)
+                                img = img.convert("RGB")
+                        img.thumbnail((1280, 1280)) 
+                        img.save(photo_path, format="JPEG", quality=85) 
                 except Exception as e:
                     print(f"Ошибка сжатия, сохраняем оригинал: {e}")
                     with open(photo_path, "wb") as f:
@@ -1199,9 +1199,9 @@ def tools_execute():
 
     return jsonify({"error": "Неизвестное действие"}), 400
 
+with app.app_context():
+    init_db()
 
 if __name__ == "__main__":
-    with app.app_context():
-        init_db()
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port, debug=False)
