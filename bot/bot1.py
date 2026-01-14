@@ -54,12 +54,14 @@ BASE_SERVER_URL = os.getenv("BASE_SERVER_URL") or os.getenv("API_URL") or "http:
 if os.path.exists("/data"):
     print(f"Running on Render. Server URL: {BASE_SERVER_URL}")
     DB_FILE = "/data/applications.db"
-    BACKUP_FILE = "/data/pending_applications.json" 
+    BACKUP_FILE = "/data/pending_applications.json"
+    PERSISTENCE_FILE = "/data/bot_data.pickle" 
 else:
     print(f"Running Locally. Server URL: {BASE_SERVER_URL}")
     BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     DB_FILE = "applications.db"
     BACKUP_FILE = "pending_applications.json"
+    PERSISTENCE_FILE = "bot_data.pickle"
 
 process_pool = None
 KDC_COOLDOWN = {}
@@ -2510,7 +2512,12 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_unknown_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+    user = update.effective_user
+    message = update.effective_message
+    if not message or not user:
+        return
+
+    user_id = user.id
     chat_type = update.effective_chat.type
 
     if user_id in NOTIFY_CHAT_IDS:
@@ -2519,7 +2526,7 @@ async def handle_unknown_message(update: Update, context: ContextTypes.DEFAULT_T
     if chat_type in ["group", "supergroup"]:
         return
 
-    await update.message.reply_text(
+    await message.reply_text(
         "⚠️ <b>Я не понимаю это сообщение.</b>\n\n"
         "Пожалуйста, используйте кнопки меню для работы с ботом.\n"
         "Если меню пропало, отправьте команду <i>/start</i>",
@@ -3213,7 +3220,7 @@ async def kdc_assign_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.answer("❌ Ошибка: заявка не найдена.", show_alert=True)
 
 def main():
-    my_persistence = PicklePersistence(filepath="bot_data.pickle")
+    my_persistence = PicklePersistence(filepath=PERSISTENCE_FILE)
     db_service.check_and_add_assignee_column()
 
     msk_defaults = Defaults(tzinfo=ZoneInfo("Europe/Moscow"))
