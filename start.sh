@@ -5,7 +5,7 @@ gunicorn server.server:app \
     --workers 1 \
     --threads 10 \
     --timeout 120 \
-    --bind 0.0.0.0:$PORT &
+    --bind 0.0.0.0:8080 &
 
 SERVER_PID=$!
 
