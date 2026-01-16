@@ -1046,7 +1046,7 @@ def send_telegram_photo(chat_id, file_storage, caption, reply_markup=None):
 @app.route("/tools")
 @requires_auth
 def tools_page():
-    return render_template("tools.html")
+    return render_template("tools.html", api_token=API_SECRET)
 
 def background_sender(app, chat_id, text, reply_markup, file_data=None, filename=None, is_photo=False):
     """
