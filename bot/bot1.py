@@ -423,13 +423,34 @@ class ApiService:
     
     async def get_stats_complexity(self):
         url = f"{self.base_url}/api/stats/complexity"
-        headers = {"Authorization": f"Bearer {os.getenv('API_TOKEN', 'hospital_secret_2025')}"}
+        token = os.getenv('API_TOKEN')
+        if not token:
+            logger.error("⛔ ОШИБКА: API_TOKEN не найден! Запрос статистики отменен.")
+            return None
+
+        headers = {"Authorization": f"Bearer {token}"}
         
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers) as response:
-                if response.status == 200:
-                    return await response.json()
-                return None
+        try:
+            timeout = aiohttp.ClientTimeout(total=10)
+            
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(url, headers=headers) as response:
+                    if response.status == 200:
+                        return await response.json()
+                    else:
+                        error_text = await response.text()
+                        logger.error(f"❌ Ошибка API статистики. Статус: {response.status}. Ответ: {error_text}")
+                        return None
+
+        except aiohttp.ClientConnectorError:
+            logger.error(f"❌ Не удалось подключиться к серверу: {url}. Проверьте URL в настройках Render.")
+            return None
+        except asyncio.TimeoutError:
+            logger.error(f"❌ Превышено время ожидания ответа от {url}")
+            return None
+        except Exception as e:
+            logger.error(f"❌ Критическая ошибка в get_stats_complexity: {e}")
+            return None
 
     async def update_photos(self, application_id, username, attachments_list):
         data = {
