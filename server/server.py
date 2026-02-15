@@ -31,6 +31,7 @@ from math import ceil
 from functools import wraps
 from dotenv import load_dotenv
 from PIL import Image
+import uuid
 
 
 load_dotenv()
@@ -45,6 +46,8 @@ app = Flask(__name__)
 
 WEB_USER = os.getenv("WEB_USER")
 WEB_PASS = os.getenv("WEB_PASS")
+OPERATOR_USER = os.getenv("OPERATOR_USER")
+OPERATOR_PASS = os.getenv("OPERATOR_PASS")
 if not API_SECRET or not WEB_PASS:
     raise ValueError("Не заданы переменные окружения API_TOKEN или WEB_PASS")
 
@@ -64,6 +67,29 @@ def requires_auth(f):
         auth = request.authorization
         if not auth or not check_auth(auth.username, auth.password):
             return authenticate()
+        return f(*args, **kwargs)
+    return decorated
+
+if not OPERATOR_USER or not OPERATOR_PASS:
+    print("⚠️ ПРЕДУПРЕЖДЕНИЕ: Не задан логин/пароль оператора! Вход будет недоступен.")
+
+def check_operator_auth(username, password):
+    """Сверяет данные оператора"""
+    return username == OPERATOR_USER and password == OPERATOR_PASS
+
+def authenticate_operator():
+    """Вызывает окно логина СПЕЦИАЛЬНО для оператора (другая зона доступа)"""
+    return Response(
+    'Доступ только для оператора.\n', 401,
+    {'WWW-Authenticate': 'Basic realm="Operator Zone"'})
+
+def requires_operator_auth(f):
+    """Декоратор, который пускает только по паролю оператора"""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        auth = request.authorization
+        if not auth or not check_operator_auth(auth.username, auth.password):
+            return authenticate_operator()
         return f(*args, **kwargs)
     return decorated
 
@@ -1047,6 +1073,72 @@ def send_telegram_photo(chat_id, file_storage, caption, reply_markup=None):
 @requires_auth
 def tools_page():
     return render_template("tools.html", api_token=API_SECRET)
+
+@app.route("/operator", methods=["GET", "POST"])
+@requires_operator_auth
+def operator_panel():
+    EMP_NAME = "Шубина Анастасия Игоревна"
+    EMP_IP = "10.118.79.67"
+    EMP_DEPT = "Компьютерной обработки документов по расчетам ОМС"
+    EMP_TG_ID = "123456789" 
+    today_str = datetime.now().strftime("%d.%m.%Y")
+    
+    if request.method == "POST":
+        try:
+            p_name = request.form.get("patient_name")
+            p_dob = request.form.get("patient_dob")
+            p_ib = request.form.get("ib_number")
+            p_erzl = request.form.get("erzl_id")
+            p_case_date = request.form.get("case_date") or today_str 
+            details_text = (
+                f"1.ГКБ им. В.В.Вересаева\n"
+                f"2. {p_name}\n"
+                f"{p_dob}\n"
+                f"3.и/б {p_ib}\n"
+                f"{p_case_date}\n"
+                f"5.ID {p_erzl} отсутствует id ерзл у пациента дубль?"
+            )
+            app_uuid = str(uuid.uuid4())[:8]
+            
+            photos_list = []
+            file = request.files.get("screenshot")
+            if file and file.filename:
+                ext = file.filename.split(".")[-1]
+                safe_filename = f"{app_uuid}_web.{ext}"
+                save_path = os.path.join(app.config["UPLOAD_FOLDER"], safe_filename)
+                file.save(save_path)
+                photos_list.append(safe_filename)
+            tz_moscow = pytz.timezone('Europe/Moscow')
+            created_at = datetime.now(tz_moscow).strftime("%Y-%m-%d %H:%M")
+
+            db_data = {
+                "name": EMP_NAME,
+                "ip": EMP_IP,
+                "department": EMP_DEPT,
+                "details": details_text,
+                "application_id": app_uuid,
+                "username": "WebOperator",
+                "chat_id": EMP_TG_ID, 
+                
+                "status": "active",
+                "difficulty": "low",
+                "photos_json": json.dumps(photos_list),
+                "created_at": created_at,
+            }
+
+            repo_create_application(db_data)
+            return render_template("operator.html", 
+                                   success=f"Заявка {app_uuid} успешно отправлена!", 
+                                   emp_name=EMP_NAME,
+                                   default_date=today_str)
+
+        except Exception as e:
+            return render_template("operator.html", 
+                                   error=f"Ошибка: {str(e)}", 
+                                   emp_name=EMP_NAME,
+                                   default_date=today_str)
+
+    return render_template("operator.html", emp_name=EMP_NAME, default_date=today_str)
 
 def background_sender(app, chat_id, text, reply_markup, file_data=None, filename=None, is_photo=False):
     """

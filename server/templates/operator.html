@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Панель Оператора</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #eef2f7; }
+        .main-card {
+            max-width: 600px;
+            margin: 40px auto;
+            border-radius: 15px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+            border: none;
+        }
+        .header-bg {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 15px 15px 0 0;
+        }
+        .form-label { font-weight: 600; color: #444; }
+        .btn-submit {
+            height: 55px;
+            font-size: 18px;
+            font-weight: bold;
+            background: #764ba2;
+            border: none;
+        }
+        .btn-submit:hover { background: #5c3a7d; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="card main-card">
+        <div class="header-bg text-center">
+            <h3 class="mb-0">Быстрая подача</h3>
+            <small>{{ emp_name }}</small>
+        </div>
+        
+        <div class="card-body p-4">
+            
+            {% if success %}
+            <div class="alert alert-success alert-dismissible fade show">
+                ✅ {{ success }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+            {% endif %}
+            {% if error %}
+            <div class="alert alert-danger">❌ {{ error }}</div>
+            {% endif %}
+
+            <form action="/operator" method="POST" enctype="multipart/form-data">
+                
+                <div class="mb-3">
+                    <label class="form-label">2. ФИО Пациента</label>
+                    <input type="text" name="patient_name" class="form-control form-control-lg" 
+                           placeholder="Иванов Иван Иванович" required autofocus>
+                </div>
+
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Дата рождения</label>
+                        <input type="text" name="patient_dob" class="form-control" 
+                               placeholder="12.05.1985" required>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">3. Номер И/Б</label>
+                        <input type="text" name="ib_number" class="form-control" 
+                               placeholder="123456-2026-А" required>
+                    </div>
+                </div>
+
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Дата случая</label>
+                        <input type="text" name="case_date" class="form-control" 
+                               value="{{ default_date }}" required>
+                    </div>
+                    
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">4. ID ЕРЗЛ (Дубль)</label>
+                        <input type="text" name="erzl_id" class="form-control" 
+                               placeholder="370..." required>
+                    </div>
+                </div>
+
+                <div class="mb-4">
+                    <label class="form-label">📷 Скриншот (обязательно)</label>
+                    <input type="file" name="screenshot" class="form-control" accept="image/*" required>
+                </div>
+
+                <button type="submit" class="btn btn-primary w-100 btn-submit">
+                    ОТПРАВИТЬ ЗАЯВКУ 🚀
+                </button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
