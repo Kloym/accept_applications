@@ -38,6 +38,7 @@ load_dotenv()
 UPLOAD_FOLDER_NAME = "uploads"
 BOT_TOKEN = os.getenv("TOKEN")
 API_SECRET = os.getenv("API_TOKEN")
+ADMIN_IDS = os.getenv("ADMIN_IDS")
 if not API_SECRET:
     print("⛔ SERVER ERROR: No API_TOKEN found!")
     exit(1)
@@ -1127,6 +1128,16 @@ def operator_panel():
             }
 
             repo_create_application(db_data)
+            try:
+                msg_text = (
+                    f"⚡️ <b>Новая заявка (Дубль)!</b>\n"
+                    f"От: {EMP_NAME}\n"
+                    f"Пациент: {p_name}\n"
+                    f"ID: <code>{app_uuid}</code>"
+                )
+                send_telegram_message(ADMIN_IDS, msg_text)
+            except Exception as e:
+                print(f"Ошибка уведомления админа: {e}")
             return render_template("operator.html", 
                                    success=f"Заявка {app_uuid} успешно отправлена!", 
                                    emp_name=EMP_NAME,
